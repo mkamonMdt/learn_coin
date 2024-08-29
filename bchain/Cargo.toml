@@ -1,6 +1,5 @@
-workspace = { members = ["bchain"] }
 [package]
-name = "learn_coin"
+name = "bchain"
 version = "0.1.0"
 edition = "2021"
 
