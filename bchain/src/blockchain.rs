@@ -24,7 +24,7 @@ impl Blockchain {
         }
     }
 
-    fn add_block(&mut self, data: Vec<u8>) {
+    fn create_block(&mut self, data: Vec<u8>) {
         let previous_block = &self.chain[self.chain.len() - 1];
         let meta = BlockMeta {
             index: previous_block.meta.index + 1,
@@ -36,6 +36,13 @@ impl Blockchain {
 
         self.chain.push(Block { meta, hash, data });
     }
+
+    fn add_block(&mut self, next: Block) {
+        let current_top = &self.chain[self.chain.len() - 1];
+        if validate_block(current_top, &next) {
+            self.chain.push(next);
+        }
+    }
 }
 
 fn calculate_hash(meta: &BlockMeta, data: &Vec<u8>) -> String {
@@ -46,4 +53,17 @@ fn calculate_hash(meta: &BlockMeta, data: &Vec<u8>) -> String {
     ));
     hasher.update(data);
     format!("{:x}", hasher.finalize())
+}
+
+fn validate_block(current_reference: &Block, incoming_next: &Block) -> bool {
+    if current_reference.meta.index + 1 != incoming_next.meta.index {
+        return false;
+    }
+    if current_reference.meta.timestamp >= incoming_next.meta.timestamp {
+        return false;
+    }
+    if current_reference.hash != incoming_next.meta.previous_hash {
+        return false;
+    }
+    calculate_hash(&incoming_next.meta, &incoming_next.data) != incoming_next.hash
 }
