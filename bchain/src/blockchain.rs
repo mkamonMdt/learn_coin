@@ -1,5 +1,7 @@
-use crate::block::{Block, BlockMeta};
-use sha2::{Digest, Sha256};
+use crate::{
+    block::{Block, BlockMeta},
+    constats::DIFFICULTY,
+};
 
 pub struct Blockchain {
     chain: Vec<Block>,
@@ -21,6 +23,7 @@ impl Blockchain {
             },
             hash: String::from("Genesis Hash"),
             data: String::from("Genesis Block").into(),
+            nonce: 0,
         }
     }
 
@@ -31,10 +34,10 @@ impl Blockchain {
             timestamp: 0,
             previous_hash: previous_block.hash.clone(),
         };
+        let mut block = Block::new(meta, data);
+        block.mine(DIFFICULTY);
 
-        let hash = calculate_hash(&meta, &data);
-
-        self.chain.push(Block { meta, hash, data });
+        self.chain.push(block);
     }
 
     fn add_block(&mut self, next: Block) {
@@ -43,16 +46,6 @@ impl Blockchain {
             self.chain.push(next);
         }
     }
-}
-
-fn calculate_hash(meta: &BlockMeta, data: &Vec<u8>) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(format!(
-        "{}{}{}",
-        meta.index, meta.timestamp, meta.previous_hash
-    ));
-    hasher.update(data);
-    format!("{:x}", hasher.finalize())
 }
 
 fn validate_block(current_reference: &Block, incoming_next: &Block) -> bool {
@@ -65,5 +58,10 @@ fn validate_block(current_reference: &Block, incoming_next: &Block) -> bool {
     if current_reference.hash != incoming_next.meta.previous_hash {
         return false;
     }
-    calculate_hash(&incoming_next.meta, &incoming_next.data) != incoming_next.hash
+
+    let target = "0".repeat(DIFFICULTY);
+    if incoming_next.hash[..DIFFICULTY] != target {
+        return false;
+    }
+    incoming_next.calculate_hash() != incoming_next.hash
 }
