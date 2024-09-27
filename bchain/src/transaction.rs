@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct Transaction {
+pub struct Transaction {
     sender: String,
     receiver: String,
     amount: f64,
