@@ -1,5 +1,175 @@
-mod block;
-mod blockchain;
-mod constats;
-mod mempool;
-mod transaction;
+use std::{collections::HashMap, thread::current};
+
+use chrono::Utc;
+use rand::Rng;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct Transaction {
+    sender: String,
+    receiver: String,
+    amount: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Block {
+    timestamp: i64,
+    transactions: Vec<Transaction>,
+    previous_hash: String,
+    hash: String,
+    validator: String,
+}
+
+impl Block {
+    fn new(transactions: Vec<Transaction>, previous_hash: String, validator: String) -> Self {
+        let timestamp = Utc::now().timestamp();
+        let mut block = Block {
+            timestamp,
+            transactions,
+            previous_hash,
+            hash: String::new(),
+            validator,
+        };
+        block.hash = block.calculate_hash();
+        block
+    }
+
+    fn calculate_hash(&self) -> String {
+        let input = format!(
+            "{}{}{}{}",
+            self.timestamp,
+            serde_json::to_string(&self.transactions).unwrap(),
+            self.previous_hash,
+            self.validator
+        );
+        let mut hasher = Sha256::new();
+        hasher.update(input);
+        let result = hasher.finalize();
+        format!("{:x}", result)
+    }
+}
+
+#[derive(Debug)]
+struct Wallet {
+    balance: f64,
+    staked: f64,
+}
+
+#[derive(Debug)]
+struct Blockchain {
+    chain: Vec<Block>,
+    wallets: HashMap<String, Wallet>,
+}
+
+impl Blockchain {
+    fn new() -> Self {
+        let mut wallets = HashMap::new();
+        wallets.insert(
+            "Genesis".to_string(),
+            Wallet {
+                balance: 1000.0,
+                staked: 0.0,
+            },
+        );
+        let genesis_block = Block::new(
+            vec![Transaction {
+                sender: "Genesis".to_string(),
+                receiver: "System".to_string(),
+                amount: 1000.0,
+            }],
+            "0".to_string(),
+            "Genesis".to_string(),
+        );
+        Blockchain {
+            chain: vec![genesis_block],
+            wallets,
+        }
+    }
+
+    fn stake(&mut self, user: &str, amount: f64) -> Result<(), String> {
+        let wallet = self.wallets.get_mut(user).ok_or("User not founf")?;
+        if wallet.balance >= amount {
+            wallet.balance -= amount;
+            wallet.staked += amount;
+            Ok(())
+        } else {
+            Err("Insufficient balance to stake".to_string())
+        }
+    }
+
+    fn select_validator(&self) -> Option<String> {
+        let total_stake: f64 = self.wallets.values().map(|w| w.staked).sum();
+        if total_stake == 0.0 {
+            return None;
+        }
+
+        let mut rng = rand::thread_rng();
+        let random_point = rng.gen_range(0.0..total_stake);
+        let mut cumulative = 0.0;
+
+        for (user, wallet) in &self.wallets {
+            cumulative += wallet.staked;
+            if cumulative >= random_point {
+                return Some(user.clone());
+            }
+        }
+        None
+    }
+
+    fn add_block(&mut self, transactions: Vec<Transaction>) -> Result<(), String> {
+        let validator = self.select_validator().ok_or("No validators available")?;
+        let previous_block = self.chain.last().unwrap();
+        let new_block = Block::new(
+            transactions.clone(),
+            previous_block.hash.clone(),
+            validator.clone(),
+        );
+
+        for tx in &transactions {
+            let sender_wallet = self.wallets.get_mut(&tx.sender).ok_or("Sender not found")?;
+            if sender_wallet.balance < tx.amount {
+                return Err("Insufficient balance".to_string());
+            }
+            sender_wallet.balance -= tx.amount;
+
+            let receiver_wallet = self.wallets.entry(tx.receiver.clone()).or_insert(Wallet {
+                balance: 0.0,
+                staked: 0.0,
+            });
+            receiver_wallet.balance += tx.amount;
+        }
+
+        let validator_wallet = self.wallets.get_mut(&validator).unwrap();
+        validator_wallet.balance += 10.0;
+
+        self.chain.push(new_block);
+        Ok(())
+    }
+
+    fn is_valid(&self) -> bool {
+        for i in 1..self.chain.len() {
+            let current = &self.chain[i];
+            let previous = &self.chain[i - 1];
+
+            if current.hash != current.calculate_hash() || current.previous_hash != previous.hash {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_genesis_block() {
+        let blockchain = Blockchain::new();
+        assert_eq!(blockchain.chain.len(), 1);
+        let first_block = blockchain.chain.first().unwrap();
+        assert_eq!(first_block.previous_hash, "0".to_owned());
+        assert_eq!(first_block.validator, "Genesis".to_owned());
+    }
+}
