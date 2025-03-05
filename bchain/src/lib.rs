@@ -1,15 +1,24 @@
-use std::{collections::HashMap, thread::current, u64};
-
 use chrono::Utc;
-use rand::Rng;
 use serde::{Deserialize, Serialize};
-use sha2::{digest::block_buffer, Digest, Sha256};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+enum TransactionType {
+    Transfer {
+        sender: String,
+        receiver: String,
+        amount: f64,
+    },
+    Stake {
+        user: String,
+        amount: f64,
+    },
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Transaction {
-    sender: String,
-    receiver: String,
-    amount: f64,
+    tx_type: TransactionType,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -53,7 +62,6 @@ impl Block {
 #[derive(Debug)]
 struct Wallet {
     balance: f64,
-    staked: f64,
 }
 
 #[derive(Debug)]
@@ -66,18 +74,14 @@ struct Blockchain {
 impl Blockchain {
     fn new() -> Self {
         let mut wallets = HashMap::new();
-        wallets.insert(
-            "Genesis".to_string(),
-            Wallet {
-                balance: 1000.0,
-                staked: 0.0,
-            },
-        );
+        wallets.insert("Genesis".to_string(), Wallet { balance: 1000.0 });
         let genesis_block = Block::new(
             vec![Transaction {
-                sender: "Genesis".to_string(),
-                receiver: "System".to_string(),
-                amount: 1000.0,
+                tx_type: TransactionType::Transfer {
+                    sender: "Genesis".to_string(),
+                    receiver: "System".to_string(),
+                    amount: 1000.0,
+                },
             }],
             "0".to_string(),
             "Genesis".to_string(),
@@ -89,19 +93,30 @@ impl Blockchain {
         }
     }
 
-    fn stake(&mut self, user: &str, amount: f64) -> Result<(), String> {
-        let wallet = self.wallets.get_mut(user).ok_or("User not founf")?;
-        if wallet.balance >= amount {
-            wallet.balance -= amount;
-            wallet.staked += amount;
-            Ok(())
-        } else {
-            Err("Insufficient balance to stake".to_string())
+    fn get_stake_pool(&self, epoch: usize) -> HashMap<String, f64> {
+        let up_to_block = self.get_validators_consensus_block(epoch);
+        let mut stake_pool = HashMap::new();
+        let up_to_block = up_to_block.min(self.chain.len() - 1);
+        for block in &self.chain[..=up_to_block] {
+            for tx in &block.transactions {
+                if let TransactionType::Stake { user, amount } = &tx.tx_type {
+                    *stake_pool.entry(user.clone()).or_insert(0.0) += amount;
+                }
+            }
         }
+        stake_pool
     }
 
     fn get_epoch(&self, block_height: usize) -> usize {
         block_height / self.slots_per_epoch
+    }
+
+    fn get_validators_consensus_block(&self, epoch: usize) -> usize {
+        if epoch == 0 {
+            0
+        } else {
+            epoch * self.slots_per_epoch - 1
+        }
     }
 
     fn get_epoch_seed(&self, epoch: usize) -> String {
@@ -109,18 +124,19 @@ impl Blockchain {
             return "0".to_string();
         }
 
-        let last_block_of_prev_epoch = epoch * self.slots_per_epoch - 1;
+        let validators_consensus_block = self.get_validators_consensus_block(epoch);
         assert!(
-            last_block_of_prev_epoch < self.chain.len(),
+            validators_consensus_block < self.chain.len(),
             "Chain of len={} too short for epoch={}",
-            last_block_of_prev_epoch,
+            validators_consensus_block,
             epoch
         );
-        self.chain[last_block_of_prev_epoch].hash.clone()
+        self.chain[validators_consensus_block].hash.clone()
     }
 
     fn get_validator_for_slots(&self, epoch: usize, slot: usize) -> Option<String> {
-        let total_stake: f64 = self.wallets.values().map(|w| w.staked).sum();
+        let stake_pool = self.get_stake_pool(epoch);
+        let total_stake: f64 = stake_pool.values().sum();
         if total_stake == 0.0 {
             return Some("Genesis".to_string());
         }
@@ -134,8 +150,8 @@ impl Blockchain {
         let random_point = seed_value as f64 % total_stake;
 
         let mut cumulative = 0.0;
-        for (user, wallet) in &self.wallets {
-            cumulative += wallet.staked;
+        for (user, stake) in &stake_pool {
+            cumulative += stake;
             if cumulative >= random_point {
                 return Some(user.clone());
             }
@@ -161,17 +177,32 @@ impl Blockchain {
         );
 
         for tx in &transactions {
-            let sender_wallet = self.wallets.get_mut(&tx.sender).ok_or("Sender not found")?;
-            if sender_wallet.balance < tx.amount {
-                return Err("Insufficient balance".to_string());
-            }
-            sender_wallet.balance -= tx.amount;
+            match &tx.tx_type {
+                TransactionType::Stake { user, amount } => {
+                    let wallet = self.wallets.get_mut(user).ok_or("User not found")?;
+                    if wallet.balance < *amount {
+                        return Err("Insufficient ballance to stake".to_string());
+                    }
+                    wallet.balance -= *amount;
+                }
+                TransactionType::Transfer {
+                    sender,
+                    receiver,
+                    amount,
+                } => {
+                    let sender_wallet = self.wallets.get_mut(sender).ok_or("Sender not found")?;
+                    if sender_wallet.balance < *amount {
+                        return Err("Insufficient balance".to_string());
+                    }
+                    sender_wallet.balance -= *amount;
 
-            let receiver_wallet = self.wallets.entry(tx.receiver.clone()).or_insert(Wallet {
-                balance: 0.0,
-                staked: 0.0,
-            });
-            receiver_wallet.balance += tx.amount;
+                    let receiver_wallet = self
+                        .wallets
+                        .entry(receiver.clone())
+                        .or_insert(Wallet { balance: 0.0 });
+                    receiver_wallet.balance += *amount;
+                }
+            }
         }
 
         let validator_wallet = self.wallets.get_mut(&validator).unwrap();
@@ -197,6 +228,42 @@ impl Blockchain {
 #[cfg(test)]
 mod tests {
     use super::*;
+    const INITIAL_AMOUNT: f64 = 100.0;
+    const EXCEESIVE_AMOUNT: f64 = 150.0;
+    const SUFFICIENT_AMOUNT: f64 = 60.0;
+
+    fn initiate_account(blockchain: &mut Blockchain, user: String) {
+        blockchain
+            .add_block(vec![Transaction {
+                tx_type: TransactionType::Transfer {
+                    sender: "Genesis".to_string(),
+                    receiver: user,
+                    amount: INITIAL_AMOUNT,
+                },
+            }])
+            .unwrap();
+    }
+
+    fn put_stake(blockchain: &mut Blockchain, user: String, amount: f64) -> Result<(), String> {
+        blockchain.add_block(vec![Transaction {
+            tx_type: TransactionType::Stake { user, amount },
+        }])
+    }
+
+    fn transfer(
+        blockchain: &mut Blockchain,
+        sender: String,
+        receiver: String,
+        amount: f64,
+    ) -> Result<(), String> {
+        blockchain.add_block(vec![Transaction {
+            tx_type: TransactionType::Transfer {
+                sender,
+                receiver,
+                amount,
+            },
+        }])
+    }
 
     #[test]
     fn test_genesis_block() {
@@ -205,5 +272,79 @@ mod tests {
         let first_block = blockchain.chain.first().unwrap();
         assert_eq!(first_block.previous_hash, "0".to_owned());
         assert_eq!(first_block.validator, "Genesis".to_owned());
+    }
+
+    #[test]
+    fn test_ok_when_put_valid_stake() {
+        let mut blockchain = Blockchain::new();
+        println!("Genesis block: {:?}", blockchain.chain[0]);
+
+        let account_1 = "Allice".to_string();
+        initiate_account(&mut blockchain, account_1.clone());
+        assert!(put_stake(&mut blockchain, account_1, SUFFICIENT_AMOUNT).is_ok());
+    }
+
+    #[test]
+    fn test_error_when_put_too_high_stake() {
+        let mut blockchain = Blockchain::new();
+        println!("Genesis block: {:?}", blockchain.chain[0]);
+
+        let account_1 = "Allice".to_string();
+        initiate_account(&mut blockchain, account_1.clone());
+        assert!(put_stake(&mut blockchain, account_1, EXCEESIVE_AMOUNT).is_err());
+    }
+
+    #[test]
+    fn test_error_when_too_high_stake_put_after_tx() {
+        let mut blockchain = Blockchain::new();
+        println!("Genesis block: {:?}", blockchain.chain[0]);
+
+        let account_1 = "Allice".to_string();
+        let account_2 = "Bob".to_string();
+        initiate_account(&mut blockchain, account_1.clone());
+        initiate_account(&mut blockchain, account_2.clone());
+
+        assert!(transfer(
+            &mut blockchain,
+            account_1.clone(),
+            account_2,
+            SUFFICIENT_AMOUNT
+        )
+        .is_ok());
+        assert!(put_stake(&mut blockchain, account_1, SUFFICIENT_AMOUNT).is_err());
+    }
+
+    #[test]
+    fn test_error_when_too_high_tx_after_stake_put() {
+        let mut blockchain = Blockchain::new();
+        println!("Genesis block: {:?}", blockchain.chain[0]);
+
+        let account_1 = "Allice".to_string();
+        let account_2 = "Bob".to_string();
+        initiate_account(&mut blockchain, account_1.clone());
+        initiate_account(&mut blockchain, account_2.clone());
+
+        assert!(put_stake(&mut blockchain, account_1.clone(), SUFFICIENT_AMOUNT).is_ok());
+        assert!(transfer(&mut blockchain, account_1, account_2, SUFFICIENT_AMOUNT).is_err());
+    }
+
+    #[test]
+    fn test_ok_when_high_stake_put_after_receiving() {
+        let mut blockchain = Blockchain::new();
+        println!("Genesis block: {:?}", blockchain.chain[0]);
+
+        let account_1 = "Allice".to_string();
+        let account_2 = "Bob".to_string();
+        initiate_account(&mut blockchain, account_1.clone());
+        initiate_account(&mut blockchain, account_2.clone());
+
+        assert!(transfer(
+            &mut blockchain,
+            account_2,
+            account_1.clone(),
+            SUFFICIENT_AMOUNT
+        )
+        .is_ok());
+        assert!(put_stake(&mut blockchain, account_1, EXCEESIVE_AMOUNT).is_ok());
     }
 }
