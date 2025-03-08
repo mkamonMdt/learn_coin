@@ -112,26 +112,26 @@ impl Blockchain {
     }
 
     fn get_validators_consensus_block(&self, epoch: usize) -> usize {
-        if epoch == 0 {
+        if epoch <= 2 {
             0
         } else {
-            epoch * self.slots_per_epoch - 1
+            epoch * self.slots_per_epoch - 2
         }
     }
 
     fn get_epoch_seed(&self, epoch: usize) -> String {
-        if epoch == 0 {
-            return "0".to_string();
+        match self.get_validators_consensus_block(epoch) {
+            x if x < 2 => x.to_string(),
+            validators_consensus_block => {
+                assert!(
+                    validators_consensus_block < self.chain.len(),
+                    "Chain of len={} too short for epoch={}",
+                    validators_consensus_block,
+                    epoch
+                );
+                self.chain[validators_consensus_block].hash.clone()
+            }
         }
-
-        let validators_consensus_block = self.get_validators_consensus_block(epoch);
-        assert!(
-            validators_consensus_block < self.chain.len(),
-            "Chain of len={} too short for epoch={}",
-            validators_consensus_block,
-            epoch
-        );
-        self.chain[validators_consensus_block].hash.clone()
     }
 
     fn get_validator_for_slots(&self, epoch: usize, slot: usize) -> Option<String> {
