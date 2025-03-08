@@ -1,8 +1,8 @@
 # TODO list (Found at|Done at| Description)
 
-- [ ] [421b491](https://github.com/mkamonMdt/learn_coin/commit/421b491ca376872b7bd20425e0dfc849ffb6cd1a)|| once stake is put, it stays there indefinitely. The users cannot withdraw. Mostlikely stakes should be put on specific Epoch(s), returned after some time.
-- [ ] [current]()|| Implement slashing mechanism 
-- [ ] [current]()|| Validators for epoch N once caclulated should posted during epoch N-1 and easily accessible for futher logic implementation
+- [ ] [421b491](https://github.com/mkamonmdt/learn_coin/commit/421b491ca376872b7bd20425e0dfc849ffb6cd1a)|| once stake is put, it stays there indefinitely. The users cannot withdraw. Mostlikely stakes should be put on specific Epoch(s), returned after some time.
+- [ ] [5600a9c](https://github.com/mkamonmdt/learn_coin/commit/5600a9cc0fb592f28ae2a38488849b7d272c9ef2)|| Implement slashing mechanism 
+- [ ] [5600a9c](https://github.com/mkamonmdt/learn_coin/commit/5600a9cc0fb592f28ae2a38488849b7d272c9ef2)|| Validators for epoch N once caclulated should posted during epoch N-1 and easily accessible for futher logic implementation
 
 # Solved list:
 
