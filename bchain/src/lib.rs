@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
+const EPOCH_HEIGHT: usize = 10;
+const BLOCK_CHAIN_WORTH: f64 = 1000.0;
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 enum TransactionType {
     Transfer {
@@ -80,7 +83,7 @@ impl Blockchain {
                 tx_type: TransactionType::Transfer {
                     sender: "Genesis".to_string(),
                     receiver: "System".to_string(),
-                    amount: 1000.0,
+                    amount: BLOCK_CHAIN_WORTH,
                 },
             }],
             "0".to_string(),
@@ -89,7 +92,7 @@ impl Blockchain {
         Blockchain {
             chain: vec![genesis_block],
             wallets,
-            slots_per_epoch: 10,
+            slots_per_epoch: EPOCH_HEIGHT,
         }
     }
 
@@ -112,10 +115,10 @@ impl Blockchain {
     }
 
     fn get_validators_consensus_block(&self, epoch: usize) -> usize {
-        if epoch <= 2 {
+        if epoch < 2 {
             0
         } else {
-            epoch * self.slots_per_epoch - 2
+            (epoch - 1) * self.slots_per_epoch - 1
         }
     }
 
@@ -346,5 +349,17 @@ mod tests {
         )
         .is_ok());
         assert!(put_stake(&mut blockchain, account_1, EXCEESIVE_AMOUNT).is_ok());
+    }
+
+    #[test]
+    fn test_validator_consensus_block() {
+        let blockchain = Blockchain::new();
+
+        assert_eq!(blockchain.get_validators_consensus_block(0), 0);
+        assert_eq!(blockchain.get_validators_consensus_block(1), 0);
+        assert_eq!(
+            blockchain.get_validators_consensus_block(2),
+            EPOCH_HEIGHT - 1
+        );
     }
 }
