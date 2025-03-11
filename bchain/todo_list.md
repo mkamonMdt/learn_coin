@@ -2,10 +2,10 @@
 
 - [ ] [421b491](https://github.com/mkamonmdt/learn_coin/commit/421b491ca376872b7bd20425e0dfc849ffb6cd1a)|| once stake is put, it stays there indefinitely. The users cannot withdraw. Mostlikely stakes should be put on specific Epoch(s), returned after some time.
 - [ ] [5600a9c](https://github.com/mkamonmdt/learn_coin/commit/5600a9cc0fb592f28ae2a38488849b7d272c9ef2)|| Implement slashing mechanism 
-- [ ] [5600a9c](https://github.com/mkamonmdt/learn_coin/commit/5600a9cc0fb592f28ae2a38488849b7d272c9ef2)|| Validators for epoch N once caclulated should posted during epoch N-1 and easily accessible for futher logic implementation
 
 # Solved list:
 
+- [ ] [5600a9c](https://github.com/mkamonmdt/learn_coin/commit/5600a9cc0fb592f28ae2a38488849b7d272c9ef2)|invalidated| Validators for epoch N once caclulated should posted during epoch N-1 and easily accessible for futher logic implementation
 - [x] [42cc793](https://github.com/mkamonMdt/learn_coin/commit/42cc7937cafaf89e22b74035437207ad31c62276)|current| a validator might want to have information of being selected for a slot in advance. Currently we calculate a validator based on most recent block.
 - [-] [63b3541](https://github.com/mkamonMdt/learn_coin/commit/63b3541b25a00e5d8b09ce7bec9ed66bc80a788a)|invalidated| 1:1 mapping between block slot and a validator: with greater number of stakers than slots, some will never get picked
 - [x] [63b3541](https://github.com/mkamonMdt/learn_coin/commit/63b3541b25a00e5d8b09ce7bec9ed66bc80a788a)|[421b491](https://github.com/mkamonMdt/learn_coin/commit/421b491ca376872b7bd20425e0dfc849ffb6cd1a)| stake_pool can be modified during current epoch, i.e. when seed of RNG is known 

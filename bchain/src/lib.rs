@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 const EPOCH_HEIGHT: usize = 10;
 const BLOCK_CHAIN_WORTH: f64 = 1000.0;
+const GENESIS: &str = "Genesis";
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 enum TransactionType {
@@ -77,17 +78,17 @@ struct Blockchain {
 impl Blockchain {
     fn new() -> Self {
         let mut wallets = HashMap::new();
-        wallets.insert("Genesis".to_string(), Wallet { balance: 1000.0 });
+        wallets.insert(GENESIS.to_string(), Wallet { balance: 1000.0 });
         let genesis_block = Block::new(
             vec![Transaction {
                 tx_type: TransactionType::Transfer {
-                    sender: "Genesis".to_string(),
+                    sender: GENESIS.to_string(),
                     receiver: "System".to_string(),
                     amount: BLOCK_CHAIN_WORTH,
                 },
             }],
             "0".to_string(),
-            "Genesis".to_string(),
+            GENESIS.to_string(),
         );
         Blockchain {
             chain: vec![genesis_block],
@@ -141,7 +142,7 @@ impl Blockchain {
         let stake_pool = self.get_stake_pool(epoch);
         let total_stake: f64 = stake_pool.values().sum();
         if total_stake == 0.0 {
-            return Some("Genesis".to_string());
+            return Some(GENESIS.to_string());
         }
 
         let seed = self.get_epoch_seed(epoch);
@@ -168,6 +169,21 @@ impl Blockchain {
         let slot_in_epoch = block_height % self.slots_per_epoch;
 
         self.get_validator_for_slots(epoch, slot_in_epoch)
+    }
+
+    fn process_block(&mut self, block: Block) -> Result<(), String> {
+        if block.hash != block.calculate_hash() {
+            return Err("Block hash corrupted".to_string());
+        }
+        if let Some(prev_block) = self.chain.last() {
+            if prev_block.hash != block.previous_hash {
+                return Err(format!(
+                    "Block's previous hash does not match current tip at height={}",
+                    self.chain.len()
+                ));
+            }
+        }
+        self.add_block(block.transactions)
     }
 
     fn add_block(&mut self, transactions: Vec<Transaction>) -> Result<(), String> {
@@ -239,7 +255,7 @@ mod tests {
         blockchain
             .add_block(vec![Transaction {
                 tx_type: TransactionType::Transfer {
-                    sender: "Genesis".to_string(),
+                    sender: GENESIS.to_string(),
                     receiver: user,
                     amount: INITIAL_AMOUNT,
                 },
@@ -274,7 +290,7 @@ mod tests {
         assert_eq!(blockchain.chain.len(), 1);
         let first_block = blockchain.chain.first().unwrap();
         assert_eq!(first_block.previous_hash, "0".to_owned());
-        assert_eq!(first_block.validator, "Genesis".to_owned());
+        assert_eq!(first_block.validator, GENESIS.to_owned());
     }
 
     #[test]
