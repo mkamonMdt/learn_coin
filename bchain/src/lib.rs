@@ -73,6 +73,8 @@ struct Blockchain {
     chain: Vec<Block>,
     wallets: HashMap<String, Wallet>,
     slots_per_epoch: usize,
+    current_epoch_validators: Vec<String>,
+    next_epoch_validators: Vec<String>,
 }
 
 impl Blockchain {
@@ -94,6 +96,8 @@ impl Blockchain {
             chain: vec![genesis_block],
             wallets,
             slots_per_epoch: EPOCH_HEIGHT,
+            current_epoch_validators: vec![GENESIS.to_string(); EPOCH_HEIGHT],
+            next_epoch_validators: vec![GENESIS.to_string(); EPOCH_HEIGHT],
         }
     }
 
@@ -138,11 +142,15 @@ impl Blockchain {
         }
     }
 
-    fn get_validator_for_slots(&self, epoch: usize, slot: usize) -> Option<String> {
-        let stake_pool = self.get_stake_pool(epoch);
+    fn get_validator_for_slots(
+        &self,
+        stake_pool: &HashMap<String, f64>,
+        epoch: usize,
+        slot: usize,
+    ) -> String {
         let total_stake: f64 = stake_pool.values().sum();
         if total_stake == 0.0 {
-            return Some(GENESIS.to_string());
+            return GENESIS.to_string();
         }
 
         let seed = self.get_epoch_seed(epoch);
@@ -154,24 +162,37 @@ impl Blockchain {
         let random_point = seed_value as f64 % total_stake;
 
         let mut cumulative = 0.0;
-        for (user, stake) in &stake_pool {
+        for (user, stake) in stake_pool {
             cumulative += stake;
             if cumulative >= random_point {
-                return Some(user.clone());
+                return user.clone();
             }
         }
-        None
+        GENESIS.to_string()
     }
 
-    fn select_validator(&self) -> Option<String> {
+    fn update_validators(&mut self) {
         let block_height = self.chain.len();
-        let epoch = self.get_epoch(block_height);
-        let slot_in_epoch = block_height % self.slots_per_epoch;
+        let is_epochs_first_block = (block_height % self.slots_per_epoch) == 0;
+        if !is_epochs_first_block {
+            return;
+        }
 
-        self.get_validator_for_slots(epoch, slot_in_epoch)
+        std::mem::swap(
+            &mut self.current_epoch_validators,
+            &mut self.next_epoch_validators,
+        );
+        let next_epoch = self.get_epoch(block_height) + 1;
+        let stake_pool = self.get_stake_pool(next_epoch);
+
+        for slot_in_epoch in 0..self.next_epoch_validators.len() {
+            self.next_epoch_validators[slot_in_epoch] =
+                self.get_validator_for_slots(&stake_pool, next_epoch, slot_in_epoch);
+        }
     }
 
     fn process_block(&mut self, block: Block) -> Result<(), String> {
+        self.update_validators();
         if block.hash != block.calculate_hash() {
             return Err("Block hash corrupted".to_string());
         }
@@ -187,7 +208,12 @@ impl Blockchain {
     }
 
     fn add_block(&mut self, transactions: Vec<Transaction>) -> Result<(), String> {
-        let validator = self.select_validator().ok_or("No validators available")?;
+        let block_height = self.chain.len();
+        let slot_in_epoch = block_height % self.slots_per_epoch;
+        let validator = self
+            .current_epoch_validators
+            .get(slot_in_epoch)
+            .ok_or("No validators available")?;
         let previous_block = self.chain.last().unwrap();
         let new_block = Block::new(
             transactions.clone(),
@@ -224,7 +250,7 @@ impl Blockchain {
             }
         }
 
-        let validator_wallet = self.wallets.get_mut(&validator).unwrap();
+        let validator_wallet = self.wallets.get_mut(validator).unwrap();
         validator_wallet.balance += 10.0;
 
         self.chain.push(new_block);
