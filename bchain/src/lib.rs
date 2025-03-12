@@ -1,7 +1,7 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 const EPOCH_HEIGHT: usize = 10;
 const BLOCK_CHAIN_WORTH: f64 = 1000.0;
@@ -15,6 +15,10 @@ enum TransactionType {
         amount: f64,
     },
     Stake {
+        user: String,
+        amount: f64,
+    },
+    Unstake {
         user: String,
         amount: f64,
     },
@@ -69,12 +73,20 @@ struct Wallet {
 }
 
 #[derive(Debug)]
+struct PendingUnstake {
+    user: String,
+    amount: f64,
+    effective_epoch: usize,
+}
+
+#[derive(Debug)]
 struct Blockchain {
     chain: Vec<Block>,
     wallets: HashMap<String, Wallet>,
     slots_per_epoch: usize,
     current_epoch_validators: Vec<String>,
     next_epoch_validators: Vec<String>,
+    pending_unstakes: VecDeque<PendingUnstake>,
 }
 
 impl Blockchain {
@@ -98,17 +110,27 @@ impl Blockchain {
             slots_per_epoch: EPOCH_HEIGHT,
             current_epoch_validators: vec![GENESIS.to_string(); EPOCH_HEIGHT],
             next_epoch_validators: vec![GENESIS.to_string(); EPOCH_HEIGHT],
+            pending_unstakes: VecDeque::new(),
         }
     }
 
-    fn get_stake_pool(&self, epoch: usize) -> HashMap<String, f64> {
-        let up_to_block = self.get_validators_consensus_block(epoch);
+    fn get_stake_pool(&self, up_to_block: usize) -> HashMap<String, f64> {
         let mut stake_pool = HashMap::new();
         let up_to_block = up_to_block.min(self.chain.len() - 1);
         for block in &self.chain[..=up_to_block] {
             for tx in &block.transactions {
-                if let TransactionType::Stake { user, amount } = &tx.tx_type {
-                    *stake_pool.entry(user.clone()).or_insert(0.0) += amount;
+                match &tx.tx_type {
+                    TransactionType::Stake { user, amount } => {
+                        *stake_pool.entry(user.clone()).or_insert(0.0) += amount;
+                    }
+                    TransactionType::Unstake { user, amount } => {
+                        let current_stake = stake_pool.entry(user.clone()).or_insert(0.0);
+                        *current_stake -= amount;
+                        if *current_stake <= 0.0 {
+                            stake_pool.remove(user);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -171,19 +193,14 @@ impl Blockchain {
         GENESIS.to_string()
     }
 
-    fn update_validators(&mut self) {
-        let block_height = self.chain.len();
-        let is_epochs_first_block = (block_height % self.slots_per_epoch) == 0;
-        if !is_epochs_first_block {
-            return;
-        }
-
+    fn update_validators(&mut self, block_height: usize) {
         std::mem::swap(
             &mut self.current_epoch_validators,
             &mut self.next_epoch_validators,
         );
         let next_epoch = self.get_epoch(block_height) + 1;
-        let stake_pool = self.get_stake_pool(next_epoch);
+        let up_to_block = self.get_validators_consensus_block(next_epoch);
+        let stake_pool = self.get_stake_pool(up_to_block);
 
         for slot_in_epoch in 0..self.next_epoch_validators.len() {
             self.next_epoch_validators[slot_in_epoch] =
@@ -191,8 +208,32 @@ impl Blockchain {
         }
     }
 
+    fn return_stakes(&mut self, block_height: usize) {
+        let epoch = self.get_epoch(block_height);
+        while let Some(pending) = self.pending_unstakes.front() {
+            if pending.effective_epoch <= epoch {
+                let unstake = self.pending_unstakes.pop_front().unwrap();
+                let wallet = self.wallets.get_mut(&unstake.user).unwrap();
+                wallet.balance += unstake.amount;
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn on_first_block_of_epoch(&mut self) {
+        let block_height = self.chain.len();
+        let is_epochs_first_block = (block_height % self.slots_per_epoch) == 0;
+        if !is_epochs_first_block {
+            return;
+        }
+
+        self.update_validators(block_height);
+        self.return_stakes(block_height);
+    }
+
     fn process_block(&mut self, block: Block) -> Result<(), String> {
-        self.update_validators();
+        self.on_first_block_of_epoch();
         if block.hash != block.calculate_hash() {
             return Err("Block hash corrupted".to_string());
         }
@@ -221,6 +262,7 @@ impl Blockchain {
             validator.clone(),
         );
 
+        let stake_pool = self.get_stake_pool(block_height);
         for tx in &transactions {
             match &tx.tx_type {
                 TransactionType::Stake { user, amount } => {
@@ -229,6 +271,17 @@ impl Blockchain {
                         return Err("Insufficient ballance to stake".to_string());
                     }
                     wallet.balance -= *amount;
+                }
+                TransactionType::Unstake { user, amount } => {
+                    let current_stake = stake_pool.get(user).ok_or("User not found")?;
+                    if *current_stake < *amount {
+                        return Err("Insufficient stake to unstake".to_string());
+                    }
+                    self.pending_unstakes.push_back(PendingUnstake {
+                        user: user.clone(),
+                        amount: *amount,
+                        effective_epoch: self.get_epoch(block_height) + 2,
+                    });
                 }
                 TransactionType::Transfer {
                     sender,
