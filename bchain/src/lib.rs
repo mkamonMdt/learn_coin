@@ -9,15 +9,16 @@ const BLOCK_CHAIN_WORTH: f64 = 1000.0;
 const GENESIS: &str = "Genesis";
 
 #[derive(Debug)]
-struct Wallet {
-    balance: f64,
+struct PendingUnstake {
+    amount: f64,
+    effective_epoch: usize,
 }
 
 #[derive(Debug)]
-struct PendingUnstake {
-    user: String,
-    amount: f64,
-    effective_epoch: usize,
+struct Wallet {
+    balance: f64,
+    staked: f64,
+    pending_unstakes: VecDeque<PendingUnstake>,
 }
 
 #[derive(Debug)]
@@ -27,13 +28,19 @@ struct Blockchain {
     slots_per_epoch: usize,
     current_epoch_validators: Vec<String>,
     next_epoch_validators: Vec<String>,
-    pending_unstakes: VecDeque<PendingUnstake>,
 }
 
 impl Blockchain {
     fn new() -> Self {
         let mut wallets = HashMap::new();
-        wallets.insert(GENESIS.to_string(), Wallet { balance: 1000.0 });
+        wallets.insert(
+            GENESIS.to_string(),
+            Wallet {
+                balance: 1000.0,
+                staked: 0.0,
+                pending_unstakes: VecDeque::new(),
+            },
+        );
         let genesis_block = Block::new(
             vec![Transaction {
                 tx_type: TransactionType::Transfer {
@@ -51,28 +58,14 @@ impl Blockchain {
             slots_per_epoch: EPOCH_HEIGHT,
             current_epoch_validators: vec![GENESIS.to_string(); EPOCH_HEIGHT],
             next_epoch_validators: vec![GENESIS.to_string(); EPOCH_HEIGHT],
-            pending_unstakes: VecDeque::new(),
         }
     }
 
-    fn get_stake_pool(&self, up_to_block: usize) -> HashMap<String, f64> {
+    fn get_stake_pool(&self) -> HashMap<String, f64> {
         let mut stake_pool = HashMap::new();
-        let up_to_block = up_to_block.min(self.chain.len() - 1);
-        for block in &self.chain[..=up_to_block] {
-            for tx in &block.transactions {
-                match &tx.tx_type {
-                    TransactionType::Stake { user, amount } => {
-                        *stake_pool.entry(user.clone()).or_insert(0.0) += amount;
-                    }
-                    TransactionType::Unstake { user, amount } => {
-                        let current_stake = stake_pool.entry(user.clone()).or_insert(0.0);
-                        *current_stake -= amount;
-                        if *current_stake <= 0.0 {
-                            stake_pool.remove(user);
-                        }
-                    }
-                    _ => {}
-                }
+        for (user, wallet) in &self.wallets {
+            if wallet.staked > 0.0 {
+                stake_pool.insert(user.clone(), wallet.staked);
             }
         }
         stake_pool
@@ -140,8 +133,7 @@ impl Blockchain {
             &mut self.next_epoch_validators,
         );
         let next_epoch = self.get_epoch(block_height) + 1;
-        let up_to_block = self.get_validators_consensus_block(next_epoch);
-        let stake_pool = self.get_stake_pool(up_to_block);
+        let stake_pool = self.get_stake_pool();
 
         for slot_in_epoch in 0..self.next_epoch_validators.len() {
             self.next_epoch_validators[slot_in_epoch] =
@@ -151,13 +143,13 @@ impl Blockchain {
 
     fn return_stakes(&mut self, block_height: usize) {
         let epoch = self.get_epoch(block_height);
-        while let Some(pending) = self.pending_unstakes.front() {
-            if pending.effective_epoch <= epoch {
-                let unstake = self.pending_unstakes.pop_front().unwrap();
-                let wallet = self.wallets.get_mut(&unstake.user).unwrap();
-                wallet.balance += unstake.amount;
-            } else {
-                break;
+        for wallet in self.wallets.values_mut() {
+            while let Some(pending) = wallet.pending_unstakes.front() {
+                if pending.effective_epoch <= epoch {
+                    wallet.balance += wallet.pending_unstakes.pop_front().unwrap().amount;
+                } else {
+                    break;
+                }
             }
         }
     }
@@ -203,7 +195,6 @@ impl Blockchain {
             validator.clone(),
         );
 
-        let stake_pool = self.get_stake_pool(block_height);
         for tx in &transactions {
             match &tx.tx_type {
                 TransactionType::Stake { user, amount } => {
@@ -212,16 +203,18 @@ impl Blockchain {
                         return Err("Insufficient ballance to stake".to_string());
                     }
                     wallet.balance -= *amount;
+                    wallet.staked += *amount;
                 }
                 TransactionType::Unstake { user, amount } => {
-                    let current_stake = stake_pool.get(user).ok_or("User not found")?;
-                    if *current_stake < *amount {
+                    let unstake_epoch = self.get_epoch(block_height) + 2;
+                    let wallet = self.wallets.get_mut(user).ok_or("User not found")?;
+                    if wallet.staked < *amount {
                         return Err("Insufficient stake to unstake".to_string());
                     }
-                    self.pending_unstakes.push_back(PendingUnstake {
-                        user: user.clone(),
+                    wallet.staked -= *amount;
+                    wallet.pending_unstakes.push_back(PendingUnstake {
                         amount: *amount,
-                        effective_epoch: self.get_epoch(block_height) + 2,
+                        effective_epoch: unstake_epoch,
                     });
                 }
                 TransactionType::Transfer {
@@ -234,11 +227,11 @@ impl Blockchain {
                         return Err("Insufficient balance".to_string());
                     }
                     sender_wallet.balance -= *amount;
-
-                    let receiver_wallet = self
-                        .wallets
-                        .entry(receiver.clone())
-                        .or_insert(Wallet { balance: 0.0 });
+                    let receiver_wallet = self.wallets.entry(receiver.clone()).or_insert(Wallet {
+                        balance: 0.0,
+                        staked: 0.0,
+                        pending_unstakes: VecDeque::new(),
+                    });
                     receiver_wallet.balance += *amount;
                 }
             }
