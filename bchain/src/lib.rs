@@ -1,71 +1,12 @@
-use chrono::Utc;
-use serde::{Deserialize, Serialize};
+mod primitives;
+
+use primitives::{block::Block, transaction::*};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 
 const EPOCH_HEIGHT: usize = 10;
 const BLOCK_CHAIN_WORTH: f64 = 1000.0;
 const GENESIS: &str = "Genesis";
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-enum TransactionType {
-    Transfer {
-        sender: String,
-        receiver: String,
-        amount: f64,
-    },
-    Stake {
-        user: String,
-        amount: f64,
-    },
-    Unstake {
-        user: String,
-        amount: f64,
-    },
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct Transaction {
-    tx_type: TransactionType,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Block {
-    timestamp: i64,
-    transactions: Vec<Transaction>,
-    previous_hash: String,
-    hash: String,
-    validator: String,
-}
-
-impl Block {
-    fn new(transactions: Vec<Transaction>, previous_hash: String, validator: String) -> Self {
-        let timestamp = Utc::now().timestamp();
-        let mut block = Block {
-            timestamp,
-            transactions,
-            previous_hash,
-            hash: String::new(),
-            validator,
-        };
-        block.hash = block.calculate_hash();
-        block
-    }
-
-    fn calculate_hash(&self) -> String {
-        let input = format!(
-            "{}{}{}{}",
-            self.timestamp,
-            serde_json::to_string(&self.transactions).unwrap(),
-            self.previous_hash,
-            self.validator
-        );
-        let mut hasher = Sha256::new();
-        hasher.update(input);
-        let result = hasher.finalize();
-        format!("{:x}", result)
-    }
-}
 
 #[derive(Debug)]
 struct Wallet {
