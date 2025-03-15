@@ -1,6 +1,7 @@
 mod primitives;
 
 use primitives::{block::Block, transaction::*};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 
@@ -8,13 +9,13 @@ const EPOCH_HEIGHT: usize = 10;
 const BLOCK_CHAIN_WORTH: f64 = 1000.0;
 const GENESIS: &str = "Genesis";
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct PendingUnstake {
     amount: f64,
     effective_epoch: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct Wallet {
     balance: f64,
     staked: f64,
@@ -41,6 +42,7 @@ impl Blockchain {
                 pending_unstakes: VecDeque::new(),
             },
         );
+        let state_root = Self::compute_state_root(&wallets);
         let genesis_block = Block::new(
             vec![Transaction {
                 tx_type: TransactionType::Transfer {
@@ -51,6 +53,7 @@ impl Blockchain {
             }],
             "0".to_string(),
             GENESIS.to_string(),
+            state_root,
         );
         Blockchain {
             chain: vec![genesis_block],
@@ -59,6 +62,39 @@ impl Blockchain {
             current_epoch_validators: vec![GENESIS.to_string(); EPOCH_HEIGHT],
             next_epoch_validators: vec![GENESIS.to_string(); EPOCH_HEIGHT],
         }
+    }
+
+    fn compute_state_root(wallets: &HashMap<String, Wallet>) -> String {
+        if wallets.is_empty() {
+            return format!("{:x}", Sha256::new().finalize());
+        }
+
+        let mut leaves: Vec<String> = wallets
+            .iter()
+            .map(|(user, wallet)| {
+                let data = format!("{}{}", user, serde_json::to_string(wallet).unwrap());
+                let mut hasher = Sha256::new();
+                hasher.update(data);
+                format!("{:x}", hasher.finalize())
+            })
+            .collect();
+        leaves.sort();
+
+        while leaves.len() > 1 {
+            let mut next_level = Vec::new();
+            for chunk in leaves.chunks(2) {
+                let combined = if chunk.len() == 2 {
+                    format!("{}{}", chunk[0], chunk[1])
+                } else {
+                    chunk[0].to_string()
+                };
+                let mut hasher = Sha256::new();
+                hasher.update(&combined);
+                next_level.push(format!("{:x}", hasher.finalize()));
+            }
+            leaves = next_level;
+        }
+        leaves[0].clone()
     }
 
     fn get_stake_pool(&self) -> HashMap<String, f64> {
@@ -189,11 +225,6 @@ impl Blockchain {
             .get(slot_in_epoch)
             .ok_or("No validators available")?;
         let previous_block = self.chain.last().unwrap();
-        let new_block = Block::new(
-            transactions.clone(),
-            previous_block.hash.clone(),
-            validator.clone(),
-        );
 
         for tx in &transactions {
             match &tx.tx_type {
@@ -237,6 +268,13 @@ impl Blockchain {
             }
         }
 
+        let state_root = Self::compute_state_root(&self.wallets);
+        let new_block = Block::new(
+            transactions.clone(),
+            previous_block.hash.clone(),
+            validator.clone(),
+            state_root,
+        );
         let validator_wallet = self.wallets.get_mut(validator).unwrap();
         validator_wallet.balance += 10.0;
 

@@ -10,10 +10,16 @@ pub struct Block {
     pub previous_hash: String,
     pub hash: String,
     pub validator: String,
+    pub state_root: String,
 }
 
 impl Block {
-    pub fn new(transactions: Vec<Transaction>, previous_hash: String, validator: String) -> Self {
+    pub fn new(
+        transactions: Vec<Transaction>,
+        previous_hash: String,
+        validator: String,
+        state_root: String,
+    ) -> Self {
         let timestamp = Utc::now().timestamp();
         let mut block = Block {
             timestamp,
@@ -21,6 +27,7 @@ impl Block {
             previous_hash,
             hash: String::new(),
             validator,
+            state_root,
         };
         block.hash = block.calculate_hash();
         block
@@ -28,11 +35,12 @@ impl Block {
 
     pub fn calculate_hash(&self) -> String {
         let input = format!(
-            "{}{}{}{}",
+            "{}{}{}{}{}",
             self.timestamp,
             serde_json::to_string(&self.transactions).unwrap(),
             self.previous_hash,
-            self.validator
+            self.validator,
+            self.state_root,
         );
         let mut hasher = Sha256::new();
         hasher.update(input);
