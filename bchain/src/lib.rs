@@ -3,7 +3,10 @@ mod primitives;
 use primitives::{block::Block, transaction::*};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    vec,
+};
 
 const EPOCH_HEIGHT: usize = 10;
 const BLOCK_CHAIN_WORTH: f64 = 1000.0;
@@ -42,7 +45,7 @@ impl Blockchain {
                 pending_unstakes: VecDeque::new(),
             },
         );
-        let state_root = Self::compute_state_root(&wallets);
+        let (state_root, _) = Self::compute_state_root(&wallets);
         let genesis_block = Block::new(
             vec![Transaction {
                 tx_type: TransactionType::Transfer {
@@ -64,25 +67,28 @@ impl Blockchain {
         }
     }
 
-    fn compute_state_root(wallets: &HashMap<String, Wallet>) -> String {
+    fn compute_state_root(wallets: &HashMap<String, Wallet>) -> (String, Vec<Vec<String>>) {
         if wallets.is_empty() {
-            return format!("{:x}", Sha256::new().finalize());
+            let zero_hash = format!("{:x}", Sha256::new().finalize());
+            return (zero_hash, vec![]);
         }
 
-        let mut leaves: Vec<String> = wallets
+        let mut leaves: Vec<(String, String)> = wallets
             .iter()
             .map(|(user, wallet)| {
                 let data = format!("{}{}", user, serde_json::to_string(wallet).unwrap());
                 let mut hasher = Sha256::new();
                 hasher.update(data);
-                format!("{:x}", hasher.finalize())
+                (user.clone(), format!("{:x}", hasher.finalize()))
             })
             .collect();
-        leaves.sort();
+        leaves.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut tree: Vec<Vec<String>> = vec![leaves.iter().map(|(_, h)| h.clone()).collect()];
 
-        while leaves.len() > 1 {
+        let mut current_level = tree[0].clone();
+        while current_level.len() > 1 {
             let mut next_level = Vec::new();
-            for chunk in leaves.chunks(2) {
+            for chunk in current_level.chunks(2) {
                 let combined = if chunk.len() == 2 {
                     format!("{}{}", chunk[0], chunk[1])
                 } else {
@@ -92,9 +98,75 @@ impl Blockchain {
                 hasher.update(&combined);
                 next_level.push(format!("{:x}", hasher.finalize()));
             }
-            leaves = next_level;
+            tree.push(next_level.clone());
+            current_level = next_level;
         }
-        leaves[0].clone()
+        (current_level[0].clone(), tree)
+    }
+
+    fn get_merkle_proof(&self, user: &str) -> Option<Vec<(String, bool)>> {
+        let (_, tree) = Self::compute_state_root(&self.wallets);
+        if tree.is_empty() {
+            return None;
+        }
+
+        // Find the leaf index for the user
+        let leaves = &tree[0];
+        let leaf_data = format!(
+            "{}{}",
+            user,
+            serde_json::to_string(self.wallets.get(user)?).unwrap()
+        );
+        let mut hasher = Sha256::new();
+        hasher.update(&leaf_data);
+        let leaf_hash = format!("{:x}", hasher.finalize());
+        let leaf_idx = leaves.iter().position(|h| *h == leaf_hash)?;
+
+        // Build proof by collection siblings
+        let mut proof = Vec::new();
+        let mut idx = leaf_idx;
+        for level in &tree[..tree.len() - 1] {
+            let is_left = idx % 2 == 0;
+            let sibling_idx = if is_left { idx + 1 } else { idx - 1 };
+            if sibling_idx < level.len() {
+                proof.push((level[sibling_idx].clone(), is_left))
+            }
+            idx /= 2; //Move up to parent
+        }
+        Some(proof)
+    }
+
+    fn verify_merkle_proof(
+        &self,
+        user: &str,
+        proof: &[(String, bool)],
+        block_height: usize,
+    ) -> bool {
+        let block = self.chain.get(block_height).unwrap();
+        let wallet = match self.wallets.get(user) {
+            Some(w) => w,
+            None => return false,
+        };
+
+        //compute leaf hash
+        let leaf_data = format!("{}{}", user, serde_json::to_string(wallet).unwrap());
+        let mut hasher = Sha256::new();
+        hasher.update(&leaf_data);
+        let mut current_hash = format!("{:x}", hasher.finalize());
+
+        //Recompute root using proof
+        for (sibling, is_left) in proof {
+            let combined = if *is_left {
+                format!("{}{}", current_hash, sibling)
+            } else {
+                format!("{}{}", sibling, current_hash)
+            };
+            let mut hasher = Sha256::new();
+            hasher.update(&combined);
+            current_hash = format!("{:x}", hasher.finalize());
+        }
+
+        current_hash == block.state_root
     }
 
     fn get_stake_pool(&self) -> HashMap<String, f64> {
@@ -268,7 +340,7 @@ impl Blockchain {
             }
         }
 
-        let state_root = Self::compute_state_root(&self.wallets);
+        let (state_root, _) = Self::compute_state_root(&self.wallets);
         let new_block = Block::new(
             transactions.clone(),
             previous_block.hash.clone(),
