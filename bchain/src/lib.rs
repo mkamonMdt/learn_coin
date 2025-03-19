@@ -1,4 +1,4 @@
-mod primitives;
+pub mod primitives;
 
 use primitives::{block::Block, transaction::*};
 use serde::Serialize;
@@ -26,8 +26,8 @@ struct Wallet {
 }
 
 #[derive(Debug)]
-struct Blockchain {
-    chain: Vec<Block>,
+pub struct Blockchain {
+    pub chain: Vec<Block>,
     wallets: HashMap<String, Wallet>,
     slots_per_epoch: usize,
     current_epoch_validators: Vec<String>,
@@ -289,7 +289,7 @@ impl Blockchain {
         self.add_block(block.transactions)
     }
 
-    fn add_block(&mut self, transactions: Vec<Transaction>) -> Result<(), String> {
+    pub fn add_block(&mut self, transactions: Vec<Transaction>) -> Result<(), String> {
         let block_height = self.chain.len();
         let slot_in_epoch = block_height % self.slots_per_epoch;
         let validator = self
