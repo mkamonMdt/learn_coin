@@ -11,6 +11,7 @@ use std::{
 const EPOCH_HEIGHT: usize = 10;
 const BLOCK_CHAIN_WORTH: f64 = 1000.0;
 const GENESIS: &str = "Genesis";
+const REWARD_RATE_PER_EPOCH: f64 = 0.00001;
 
 #[derive(Debug, Serialize)]
 struct PendingUnstake {
@@ -32,6 +33,7 @@ pub struct Blockchain {
     slots_per_epoch: usize,
     current_epoch_validators: Vec<String>,
     next_epoch_validators: Vec<String>,
+    total_staked: f64,
 }
 
 impl Blockchain {
@@ -47,13 +49,14 @@ impl Blockchain {
         );
         let (state_root, _) = Self::compute_state_root(&wallets);
         let genesis_block = Block::new(
-            vec![Transaction {
-                tx_type: TransactionType::Transfer {
+            vec![Transaction::new(
+                TransactionType::Transfer {
                     sender: GENESIS.to_string(),
                     receiver: "System".to_string(),
                     amount: BLOCK_CHAIN_WORTH,
                 },
-            }],
+                0.0,
+            )],
             "0".to_string(),
             GENESIS.to_string(),
             state_root,
@@ -64,6 +67,7 @@ impl Blockchain {
             slots_per_epoch: EPOCH_HEIGHT,
             current_epoch_validators: vec![GENESIS.to_string(); EPOCH_HEIGHT],
             next_epoch_validators: vec![GENESIS.to_string(); EPOCH_HEIGHT],
+            total_staked: 0.0,
         }
     }
 
@@ -242,6 +246,7 @@ impl Blockchain {
         );
         let next_epoch = self.get_epoch(block_height) + 1;
         let stake_pool = self.get_stake_pool();
+        self.total_staked = stake_pool.values().sum();
 
         for slot_in_epoch in 0..self.next_epoch_validators.len() {
             self.next_epoch_validators[slot_in_epoch] =
@@ -262,6 +267,19 @@ impl Blockchain {
         }
     }
 
+    fn distribute_rewards(&mut self) {
+        if self.total_staked == 0.0 {
+            return;
+        }
+
+        let total_reward = self.total_staked * REWARD_RATE_PER_EPOCH;
+        for user in &self.current_epoch_validators {
+            let wallet = self.wallets.get_mut(user).unwrap();
+            let user_reward = (wallet.staked / self.total_staked) * total_reward;
+            wallet.balance += user_reward;
+        }
+    }
+
     fn on_first_block_of_epoch(&mut self) {
         let block_height = self.chain.len();
         let is_epochs_first_block = (block_height % self.slots_per_epoch) == 0;
@@ -269,6 +287,7 @@ impl Blockchain {
             return;
         }
 
+        self.distribute_rewards();
         self.update_validators(block_height);
         self.return_stakes(block_height);
     }
@@ -302,10 +321,10 @@ impl Blockchain {
             match &tx.tx_type {
                 TransactionType::Stake { user, amount } => {
                     let wallet = self.wallets.get_mut(user).ok_or("User not found")?;
-                    if wallet.balance < *amount {
+                    if wallet.balance < *amount + tx.fee {
                         return Err("Insufficient ballance to stake".to_string());
                     }
-                    wallet.balance -= *amount;
+                    wallet.balance -= *amount + tx.fee;
                     wallet.staked += *amount;
                 }
                 TransactionType::Unstake { user, amount } => {
@@ -314,6 +333,10 @@ impl Blockchain {
                     if wallet.staked < *amount {
                         return Err("Insufficient stake to unstake".to_string());
                     }
+                    if wallet.balance < tx.fee {
+                        return Err(format!("Insufficient  balance for fee: {}", user));
+                    }
+                    wallet.balance -= tx.fee;
                     wallet.staked -= *amount;
                     wallet.pending_unstakes.push_back(PendingUnstake {
                         amount: *amount,
@@ -326,10 +349,10 @@ impl Blockchain {
                     amount,
                 } => {
                     let sender_wallet = self.wallets.get_mut(sender).ok_or("Sender not found")?;
-                    if sender_wallet.balance < *amount {
+                    if sender_wallet.balance < *amount + tx.fee {
                         return Err("Insufficient balance".to_string());
                     }
-                    sender_wallet.balance -= *amount;
+                    sender_wallet.balance -= *amount + tx.fee;
                     let receiver_wallet = self.wallets.entry(receiver.clone()).or_insert(Wallet {
                         balance: 0.0,
                         staked: 0.0,
@@ -348,7 +371,7 @@ impl Blockchain {
             state_root,
         );
         let validator_wallet = self.wallets.get_mut(validator).unwrap();
-        validator_wallet.balance += 10.0;
+        validator_wallet.balance += new_block.total_fees;
 
         self.chain.push(new_block);
         Ok(())
@@ -376,20 +399,22 @@ mod tests {
 
     fn initiate_account(blockchain: &mut Blockchain, user: String) {
         blockchain
-            .add_block(vec![Transaction {
-                tx_type: TransactionType::Transfer {
+            .add_block(vec![Transaction::new(
+                TransactionType::Transfer {
                     sender: GENESIS.to_string(),
                     receiver: user,
                     amount: INITIAL_AMOUNT,
                 },
-            }])
+                0.0,
+            )])
             .unwrap();
     }
 
     fn put_stake(blockchain: &mut Blockchain, user: String, amount: f64) -> Result<(), String> {
-        blockchain.add_block(vec![Transaction {
-            tx_type: TransactionType::Stake { user, amount },
-        }])
+        blockchain.add_block(vec![Transaction::new(
+            TransactionType::Stake { user, amount },
+            0.0,
+        )])
     }
 
     fn transfer(
@@ -398,13 +423,14 @@ mod tests {
         receiver: String,
         amount: f64,
     ) -> Result<(), String> {
-        blockchain.add_block(vec![Transaction {
-            tx_type: TransactionType::Transfer {
+        blockchain.add_block(vec![Transaction::new(
+            TransactionType::Transfer {
                 sender,
                 receiver,
                 amount,
             },
-        }])
+            0.0,
+        )])
     }
 
     #[test]
