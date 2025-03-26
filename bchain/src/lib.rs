@@ -1,6 +1,6 @@
 pub mod primitives;
 
-use primitives::{block::Block, transaction::*};
+use primitives::{block::Block, opcodes_language::Opcode, transaction::*};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -27,9 +27,15 @@ struct Wallet {
 }
 
 #[derive(Debug)]
+struct ContractState {
+    storage: HashMap<String, f64>,
+}
+
+#[derive(Debug)]
 pub struct Blockchain {
     pub chain: Vec<Block>,
     wallets: HashMap<String, Wallet>,
+    contracts: HashMap<String, (Vec<Opcode>, ContractState)>,
     slots_per_epoch: usize,
     current_epoch_validators: Vec<String>,
     next_epoch_validators: Vec<String>,
@@ -64,6 +70,7 @@ impl Blockchain {
         Blockchain {
             chain: vec![genesis_block],
             wallets,
+            contracts: HashMap::new(),
             slots_per_epoch: EPOCH_HEIGHT,
             current_epoch_validators: vec![GENESIS.to_string(); EPOCH_HEIGHT],
             next_epoch_validators: vec![GENESIS.to_string(); EPOCH_HEIGHT],
@@ -292,6 +299,81 @@ impl Blockchain {
         self.return_stakes(block_height);
     }
 
+    fn execute_contract(&mut self, code: &[Opcode], contract_address: &str) -> Result<(), String> {
+        let mut stack: Vec<f64> = Vec::new();
+        let contract_state = self
+            .contracts
+            .get_mut(contract_address)
+            .map(|(_, state)| state)
+            .ok_or("Contract not found")?;
+
+        for op in code {
+            match op {
+                Opcode::Push(value) => stack.push(*value),
+                Opcode::Add => {
+                    if stack.len() < 2 {
+                        return Err("Stack underflow: Add".to_string());
+                    }
+                    let b = stack.pop().unwrap();
+                    let a = stack.pop().unwrap();
+                    stack.push(a + b);
+                }
+                Opcode::Sub => {
+                    if stack.len() < 2 {
+                        return Err("Stack underflow: Sub".to_string());
+                    }
+                    let b = stack.pop().unwrap();
+                    let a = stack.pop().unwrap();
+                    stack.push(a - b);
+                }
+                Opcode::Eq => {
+                    if stack.len() < 2 {
+                        return Err("Stack underflow: Eq".to_string());
+                    }
+                    let b = stack.pop().unwrap();
+                    let a = stack.pop().unwrap();
+                    stack.push(if a == b { 1.0 } else { 0.0 });
+                }
+                Opcode::Store(key) => {
+                    if stack.is_empty() {
+                        return Err("Stack underflow: Store".to_string());
+                    }
+                    let value = stack.pop().unwrap();
+                    contract_state.storage.insert(key.clone(), value);
+                }
+                Opcode::Load(key) => {
+                    let value = *contract_state.storage.get(key).unwrap_or(&0.0);
+                    stack.push(value);
+                }
+                Opcode::Balance(user) => {
+                    let balance = self.wallets.get(user).map(|w| w.balance).unwrap_or(0.0);
+                    stack.push(balance);
+                }
+                Opcode::Transfer(from, to) => {
+                    if stack.is_empty() {
+                        return Err("Stack underflow: Transfer".to_string());
+                    }
+                    let amount = stack.pop().unwrap();
+                    if amount <= 0.0 {
+                        return Err("Invalid transfer amount".to_string());
+                    }
+                    let from_wallet = self
+                        .wallets
+                        .get_mut(from)
+                        .ok_or(format!("User not found {}", from))?;
+                    from_wallet.balance -= amount;
+                    let to_wallet = self.wallets.entry(to.clone()).or_insert(Wallet {
+                        balance: 0.0,
+                        staked: 0.0,
+                        pending_unstakes: VecDeque::new(),
+                    });
+                    to_wallet.balance += amount;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn process_block(&mut self, block: Block) -> Result<(), String> {
         self.on_first_block_of_epoch();
         if block.hash != block.calculate_hash() {
@@ -314,8 +396,9 @@ impl Blockchain {
         let validator = self
             .current_epoch_validators
             .get(slot_in_epoch)
-            .ok_or("No validators available")?;
-        let previous_block = self.chain.last().unwrap();
+            .ok_or("No validators available")?
+            .clone();
+        let previous_block = self.chain.last().unwrap().clone();
 
         for tx in &transactions {
             match &tx.tx_type {
@@ -360,6 +443,28 @@ impl Blockchain {
                     });
                     receiver_wallet.balance += *amount;
                 }
+                TransactionType::DeployContract { code } => {
+                    let contract_address = format!("contract_{}", self.contracts.len());
+                    self.contracts.insert(
+                        contract_address.clone(),
+                        (
+                            code.clone(),
+                            ContractState {
+                                storage: HashMap::new(),
+                            },
+                        ),
+                    );
+                    println!("Deployed contract at address: {}", contract_address);
+                }
+                TransactionType::CallContract { contract_address } => {
+                    let x = &self
+                        .contracts
+                        .get(contract_address)
+                        .ok_or("Contract not found")?
+                        .0
+                        .clone();
+                    self.execute_contract(x, contract_address)?;
+                }
             }
         }
 
@@ -370,7 +475,7 @@ impl Blockchain {
             validator.clone(),
             state_root,
         );
-        let validator_wallet = self.wallets.get_mut(validator).unwrap();
+        let validator_wallet = self.wallets.get_mut(&validator).unwrap();
         validator_wallet.balance += new_block.total_fees;
 
         self.chain.push(new_block);
@@ -526,5 +631,53 @@ mod tests {
             blockchain.get_validators_consensus_block(2),
             EPOCH_HEIGHT - 1
         );
+    }
+
+    #[test]
+    fn test_simple_contract() {
+        let mut blockchain = Blockchain::new();
+
+        blockchain.wallets.insert(
+            "Alice".to_string(),
+            Wallet {
+                balance: 500.0,
+                staked: 0.0,
+                pending_unstakes: VecDeque::new(),
+            },
+        );
+
+        // Deploy a simple contract: "If Alice's balance > 100, transfer 50 to Bob"
+        let contract_code = vec![
+            Opcode::Balance("Alice".to_string()),   // Push Alice's balance
+            Opcode::Push(100.0),                    // Push 100
+            Opcode::Sub,                            // Subtract: balance - 100
+            Opcode::Push(0.0),                      // Push 0
+            Opcode::Eq,        // Check if (balance - 100) == 0 (i.e., balance <= 100)
+            Opcode::Push(0.0), // Push 0
+            Opcode::Eq,        // If balance > 100, stack has 1, else 0
+            Opcode::Store("condition".to_string()), // Store the condition result
+            Opcode::Load("condition".to_string()), // Load the condition
+            Opcode::Push(1.0), // Push 1
+            Opcode::Eq,        // Check if condition == 1
+            Opcode::Push(50.0), // Push 50 (amount to transfer)
+            Opcode::Transfer("Alice".to_string(), "Bob".to_string()), // Transfer 50 from Alice to Bob
+        ];
+
+        let tx1 = Transaction::new(
+            TransactionType::DeployContract {
+                code: contract_code,
+            },
+            1.0,
+        );
+        blockchain.add_block(vec![tx1]).unwrap();
+
+        // Call the contract
+        let tx2 = Transaction::new(
+            TransactionType::CallContract {
+                contract_address: "contract_0".to_string(),
+            },
+            1.0,
+        );
+        assert!(blockchain.add_block(vec![tx2]).is_ok());
     }
 }
