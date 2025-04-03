@@ -1,12 +1,13 @@
 pub mod primitives;
 
-use primitives::{block::Block, opcodes_language::Opcode, transaction::*};
+use primitives::{block::Block, transaction::*};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, VecDeque},
     vec,
 };
+use wasmi::{Caller, Engine, Extern, Func, Linker, Module, Store};
 
 const EPOCH_HEIGHT: usize = 10;
 const BLOCK_CHAIN_WORTH: f64 = 1000.0;
@@ -20,10 +21,20 @@ struct PendingUnstake {
 }
 
 #[derive(Debug, Serialize)]
-struct Wallet {
+pub struct Wallet {
     balance: f64,
     staked: f64,
     pending_unstakes: VecDeque<PendingUnstake>,
+}
+
+impl Wallet {
+    pub fn new(balance: f64) -> Self {
+        Self {
+            balance,
+            staked: 0.0,
+            pending_unstakes: VecDeque::new(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -34,8 +45,8 @@ struct ContractState {
 #[derive(Debug)]
 pub struct Blockchain {
     pub chain: Vec<Block>,
-    wallets: HashMap<String, Wallet>,
-    contracts: HashMap<String, (Vec<Opcode>, ContractState)>,
+    pub wallets: HashMap<String, Wallet>,
+    contracts: HashMap<String, (Vec<u8>, ContractState)>,
     slots_per_epoch: usize,
     current_epoch_validators: Vec<String>,
     next_epoch_validators: Vec<String>,
@@ -43,7 +54,7 @@ pub struct Blockchain {
 }
 
 impl Blockchain {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let mut wallets = HashMap::new();
         wallets.insert(
             GENESIS.to_string(),
@@ -299,79 +310,222 @@ impl Blockchain {
         self.return_stakes(block_height);
     }
 
-    fn execute_contract(&mut self, code: &[Opcode], contract_address: &str) -> Result<(), String> {
-        let mut stack: Vec<f64> = Vec::new();
-        let contract_state = self
-            .contracts
-            .get_mut(contract_address)
-            .map(|(_, state)| state)
-            .ok_or("Contract not found")?;
+    fn execute_contract(&mut self, code: &[u8], contract_address: &str) -> Result<(), String> {
+        // Initialize the Wasm engine and store
+        let engine = Engine::default();
+        let module = Module::new(&engine, code)
+            .map_err(|e| format!("Failed to laod Wasm module: {:?}", e))?;
+        let mut store: Store<String> = Store::new(&engine, contract_address.to_string());
 
-        for op in code {
-            match op {
-                Opcode::Push(value) => stack.push(*value),
-                Opcode::Add => {
-                    if stack.len() < 2 {
-                        return Err("Stack underflow: Add".to_string());
+        // Create a linker and define host functions
+        let mut linker: Linker<String> = Linker::new(&engine);
+        /*
+                // Host function: get_balance
+                let get_balance = Func::wrap(
+                    &mut store,
+                    |mut caller: Caller<(Blockchain, String)>, user_ptr: i32, user_len: i32| -> f64 {
+                        let (blockchain, _) = caller.data_mut();
+                        let memory = caller
+                            .get_export("memory")
+                            .and_then(Extern::into_memory)
+                            .ok_or("Failed to get memory")
+                            .unwrap();
+                        let user_bytes =
+                            memory.data(&caller)[user_ptr as usize..(user_ptr + user_len) as usize];
+                        let user = String::from_utf8(user_bytes).unwrap();
+                        blockchain
+                            .wallets
+                            .get(&user)
+                            .map(|w| w.balance)
+                            .unwrap_or(0.0)
+                    },
+                );
+                linker.define("env", "get_balance", get_balance).unwrap();
+        */
+
+        // Host function: get_balance
+        let get_balance = Func::wrap(
+            &mut store,
+            |caller: Caller<String>,
+             blockchain_ptr_low: i32,
+             blockchain_ptr_high: i32,
+             user_ptr: i32,
+             user_len: i32|
+             -> f64 {
+                let blockchain_ptr =
+                    ((blockchain_ptr_high as u64) << 32) | (blockchain_ptr_low as u32 as u64);
+                let blockchain: &mut Blockchain =
+                    unsafe { &mut *(blockchain_ptr as *mut Blockchain) };
+
+                let memory = match caller.get_export("memory").and_then(Extern::into_memory) {
+                    Some(mem) => mem,
+                    None => return 0.0,
+                };
+                let user_bytes = memory.data(&caller)
+                    [user_ptr as usize..(user_ptr + user_len) as usize]
+                    .to_vec();
+                let user = match String::from_utf8(user_bytes) {
+                    Ok(u) => u,
+                    Err(_) => return 0.0,
+                };
+                blockchain
+                    .wallets
+                    .get(&user)
+                    .map(|w| w.balance)
+                    .unwrap_or(0.0)
+            },
+        );
+        linker.define("env", "get_balance", get_balance).unwrap();
+
+        // Host function: get_balance
+        let transfer = Func::wrap(
+            &mut store,
+            |caller: Caller<String>,
+             blockchain_ptr_low: i32,
+             blockchain_ptr_high: i32,
+             from_ptr: i32,
+             from_len: i32,
+             to_ptr: i32,
+             to_len: i32,
+             amount: f64|
+             -> i32 {
+                let blockchain_ptr =
+                    ((blockchain_ptr_high as u64) << 32) | (blockchain_ptr_low as u32 as u64);
+                let blockchain: &mut Blockchain =
+                    unsafe { &mut *(blockchain_ptr as *mut Blockchain) };
+                let memory = caller
+                    .get_export("memory")
+                    .and_then(Extern::into_memory)
+                    .ok_or("Failed to get memory")
+                    .unwrap();
+                let from_bytes = memory.data(&caller)
+                    [from_ptr as usize..(from_ptr + from_len) as usize]
+                    .to_vec();
+                let to_bytes =
+                    memory.data(&caller)[to_ptr as usize..(to_ptr + to_len) as usize].to_vec();
+                let from = String::from_utf8(from_bytes).unwrap();
+                let to = String::from_utf8(to_bytes).unwrap();
+
+                if amount <= 0.0 {
+                    return 1; //Failure
+                }
+                let from_wallet = match blockchain.wallets.get_mut(&from) {
+                    Some(wallet) => wallet,
+                    None => return 1,
+                };
+                from_wallet.balance -= amount;
+                let to_wallet = blockchain.wallets.entry(to.clone()).or_insert(Wallet {
+                    balance: 0.0,
+                    staked: 0.0,
+                    pending_unstakes: VecDeque::new(),
+                });
+                to_wallet.balance += amount;
+                0 // Success
+            },
+        );
+        linker.define("env", "transfer", transfer).unwrap();
+
+        // Instantiate the module
+        let instance = linker
+            .instantiate(&mut store, &module)
+            .map_err(|e| format!("Failed to instantiate module: {:?}", e))?
+            .start(&mut store)
+            .map_err(|e| format!("Failed to start instance: {:?}", e))?;
+
+        // Call the execute function, passing the blockchain pointer
+        // Split the pointer into two i32s
+        let blockchain_ptr = self as *mut Blockchain as usize; // Use usize to hold the full pointer
+        let blockchain_ptr_low = (blockchain_ptr & 0xFFFFFFFF) as i32; // Lower 32 bits
+        let blockchain_ptr_high = ((blockchain_ptr >> 32) & 0xFFFFFFFF) as i32; // Upper 32 bits
+
+        let execute = instance
+            .get_export(&store, "execute")
+            .and_then(Extern::into_func)
+            .ok_or("Failed to find execute function")?;
+        let execute: Func = execute;
+        execute
+            .call(
+                &mut store,
+                &[
+                    wasmi::Val::I32(blockchain_ptr_low), // Pass blockchain_ptr as an argument
+                    wasmi::Val::I32(blockchain_ptr_high),
+                ],
+                &mut [wasmi::Val::I32(0)],
+            )
+            .map_err(|e| format!("Failed to execute contract: {:?}", e))
+        /*
+                let mut stack: Vec<f64> = Vec::new();
+                let contract_state = self
+                    .contracts
+                    .get_mut(contract_address)
+                    .map(|(_, state)| state)
+                    .ok_or("Contract not found")?;
+
+                for op in code {
+                    match op {
+                        Opcode::Push(value) => stack.push(*value),
+                        Opcode::Add => {
+                            if stack.len() < 2 {
+                                return Err("Stack underflow: Add".to_string());
+                            }
+                            let b = stack.pop().unwrap();
+                            let a = stack.pop().unwrap();
+                            stack.push(a + b);
+                        }
+                        Opcode::Sub => {
+                            if stack.len() < 2 {
+                                return Err("Stack underflow: Sub".to_string());
+                            }
+                            let b = stack.pop().unwrap();
+                            let a = stack.pop().unwrap();
+                            stack.push(a - b);
+                        }
+                        Opcode::Eq => {
+                            if stack.len() < 2 {
+                                return Err("Stack underflow: Eq".to_string());
+                            }
+                            let b = stack.pop().unwrap();
+                            let a = stack.pop().unwrap();
+                            stack.push(if a == b { 1.0 } else { 0.0 });
+                        }
+                        Opcode::Store(key) => {
+                            if stack.is_empty() {
+                                return Err("Stack underflow: Store".to_string());
+                            }
+                            let value = stack.pop().unwrap();
+                            contract_state.storage.insert(key.clone(), value);
+                        }
+                        Opcode::Load(key) => {
+                            let value = *contract_state.storage.get(key).unwrap_or(&0.0);
+                            stack.push(value);
+                        }
+                        Opcode::Balance(user) => {
+                            let balance = self.wallets.get(user).map(|w| w.balance).unwrap_or(0.0);
+                            stack.push(balance);
+                        }
+                        Opcode::Transfer(from, to) => {
+                            if stack.is_empty() {
+                                return Err("Stack underflow: Transfer".to_string());
+                            }
+                            let amount = stack.pop().unwrap();
+                            if amount <= 0.0 {
+                                return Err("Invalid transfer amount".to_string());
+                            }
+                            let from_wallet = self
+                                .wallets
+                                .get_mut(from)
+                                .ok_or(format!("User not found {}", from))?;
+                            from_wallet.balance -= amount;
+                            let to_wallet = self.wallets.entry(to.clone()).or_insert(Wallet {
+                                balance: 0.0,
+                                staked: 0.0,
+                                pending_unstakes: VecDeque::new(),
+                            });
+                            to_wallet.balance += amount;
+                        }
                     }
-                    let b = stack.pop().unwrap();
-                    let a = stack.pop().unwrap();
-                    stack.push(a + b);
                 }
-                Opcode::Sub => {
-                    if stack.len() < 2 {
-                        return Err("Stack underflow: Sub".to_string());
-                    }
-                    let b = stack.pop().unwrap();
-                    let a = stack.pop().unwrap();
-                    stack.push(a - b);
-                }
-                Opcode::Eq => {
-                    if stack.len() < 2 {
-                        return Err("Stack underflow: Eq".to_string());
-                    }
-                    let b = stack.pop().unwrap();
-                    let a = stack.pop().unwrap();
-                    stack.push(if a == b { 1.0 } else { 0.0 });
-                }
-                Opcode::Store(key) => {
-                    if stack.is_empty() {
-                        return Err("Stack underflow: Store".to_string());
-                    }
-                    let value = stack.pop().unwrap();
-                    contract_state.storage.insert(key.clone(), value);
-                }
-                Opcode::Load(key) => {
-                    let value = *contract_state.storage.get(key).unwrap_or(&0.0);
-                    stack.push(value);
-                }
-                Opcode::Balance(user) => {
-                    let balance = self.wallets.get(user).map(|w| w.balance).unwrap_or(0.0);
-                    stack.push(balance);
-                }
-                Opcode::Transfer(from, to) => {
-                    if stack.is_empty() {
-                        return Err("Stack underflow: Transfer".to_string());
-                    }
-                    let amount = stack.pop().unwrap();
-                    if amount <= 0.0 {
-                        return Err("Invalid transfer amount".to_string());
-                    }
-                    let from_wallet = self
-                        .wallets
-                        .get_mut(from)
-                        .ok_or(format!("User not found {}", from))?;
-                    from_wallet.balance -= amount;
-                    let to_wallet = self.wallets.entry(to.clone()).or_insert(Wallet {
-                        balance: 0.0,
-                        staked: 0.0,
-                        pending_unstakes: VecDeque::new(),
-                    });
-                    to_wallet.balance += amount;
-                }
-            }
-        }
-        Ok(())
+        */
     }
 
     fn process_block(&mut self, block: Block) -> Result<(), String> {
@@ -492,6 +646,12 @@ impl Blockchain {
             }
         }
         true
+    }
+}
+
+impl Default for Blockchain {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -633,8 +793,9 @@ mod tests {
         );
     }
 
+    /*
     #[test]
-    fn test_simple_contract() {
+    fn test_opcode_simple_contract() {
         let mut blockchain = Blockchain::new();
 
         blockchain.wallets.insert(
@@ -680,4 +841,5 @@ mod tests {
         );
         assert!(blockchain.add_block(vec![tx2]).is_ok());
     }
+    */
 }

@@ -1,4 +1,3 @@
-use crate::primitives::opcodes_language::Opcode;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -17,7 +16,7 @@ pub enum TransactionType {
         amount: f64,
     },
     DeployContract {
-        code: Vec<Opcode>,
+        code: Vec<u8>,
     },
     CallContract {
         contract_address: String,
