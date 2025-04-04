@@ -1,5 +1,8 @@
 # TODO list (Found at|Done at| Description)
 
+- [ ] [954ffc2](https://github.com/mkamonmdt/learn_coin/commit/954ffc26e38611ad57fc77fb2a36f769cdec77cb)|| Opcodes are fun, can we make them binary-compatible?
+- [ ] [954ffc2](https://github.com/mkamonmdt/learn_coin/commit/954ffc26e38611ad57fc77fb2a36f769cdec77cb)|| Contract interface should be external to BChain, maybe trait?
+- [ ] [954ffc2](https://github.com/mkamonmdt/learn_coin/commit/954ffc26e38611ad57fc77fb2a36f769cdec77cb)||  Nasty u64->2xu32 pointer handling
 - [ ] [5600a9c](https://github.com/mkamonmdt/learn_coin/commit/5600a9cc0fb592f28ae2a38488849b7d272c9ef2)|| Implement slashing mechanism 
 - [ ] [50d88b9](https://github.com/mkamonmdt/learn_coin/commit/50d88b94a100bd8e5db414b2191951020a162d57)|| comparision between floats should be done involving epsilon
 - [ ] [50d88b9](https://github.com/mkamonmdt/learn_coin/commit/50d88b94a100bd8e5db414b2191951020a162d57)|| magic number 2 for validator consensus should be named
