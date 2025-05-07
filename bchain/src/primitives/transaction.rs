@@ -25,12 +25,17 @@ pub enum TransactionType {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Transaction {
+    pub sender: String,
     pub tx_type: TransactionType,
     pub fee: f64,
 }
 
 impl Transaction {
-    pub fn new(tx_type: TransactionType, fee: f64) -> Self {
-        Transaction { tx_type, fee }
+    pub fn new(sender: String, tx_type: TransactionType, fee: f64) -> Self {
+        Transaction {
+            sender,
+            tx_type,
+            fee,
+        }
     }
 }
