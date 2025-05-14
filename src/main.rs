@@ -19,7 +19,7 @@ mod tests {
 
         // Load the Wasm contract bytecode, that is very un-unittest like :D
         let wasm_bytes =
-            std::fs::read("target/wasm32-unknown-unknown/release/learncoin_contract.wasm").unwrap();
+            std::fs::read("target/wasm32-unknown-unknown/release/counter_contract.wasm").unwrap();
 
         // Deploy the contract
         let tx1 = Transaction::new(
@@ -49,7 +49,7 @@ mod tests {
             .insert("Alice".to_string(), Wallet::new(500.0));
 
         let wasm_bytes =
-            std::fs::read("target/wasm32-unknown-unknown/release/learncoin_contract.wasm").unwrap();
+            std::fs::read("target/wasm32-unknown-unknown/release/counter_contract.wasm").unwrap();
         // Deploy the contract
         let tx1 = Transaction::new(
             "Alice".to_string(),
