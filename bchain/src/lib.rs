@@ -1,3 +1,5 @@
+pub mod bchain_error;
+pub mod message;
 pub mod primitives;
 
 use primitives::{block::Block, transaction::*};
