@@ -1,43 +1,18 @@
 pub mod bchain_error;
 pub mod message;
 pub mod primitives;
+pub mod wallets;
 
 use primitives::{block::Block, transaction::*};
-use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::{
-    collections::{HashMap, VecDeque},
-    vec,
-};
+use std::{collections::HashMap, vec};
+use wallets::{PendingUnstake, Wallet, Wallets};
 use wasmi::{Caller, Engine, Extern, Func, Linker, Module, Store};
 
 const EPOCH_HEIGHT: usize = 10;
 const BLOCK_CHAIN_WORTH: f64 = 1000.0;
 const GENESIS: &str = "Genesis";
 const REWARD_RATE_PER_EPOCH: f64 = 0.00001;
-
-#[derive(Debug, Serialize)]
-pub struct PendingUnstake {
-    pub amount: f64,
-    pub effective_epoch: usize,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Wallet {
-    pub balance: f64,
-    pub staked: f64,
-    pub pending_unstakes: VecDeque<PendingUnstake>,
-}
-
-impl Wallet {
-    pub fn new(balance: f64) -> Self {
-        Self {
-            balance,
-            staked: 0.0,
-            pending_unstakes: VecDeque::new(),
-        }
-    }
-}
 
 #[derive(Debug)]
 struct ContractState {
@@ -47,7 +22,7 @@ struct ContractState {
 #[derive(Debug)]
 pub struct Blockchain {
     pub chain: Vec<Block>,
-    pub wallets: HashMap<String, Wallet>,
+    pub wallets: Wallets,
     contracts: HashMap<String, Vec<u8>>,
     contract_storage: HashMap<String, HashMap<String, Vec<u8>>>,
     slots_per_epoch: usize,
@@ -58,15 +33,10 @@ pub struct Blockchain {
 
 impl Blockchain {
     pub fn new() -> Self {
-        let mut wallets = HashMap::new();
-        wallets.insert(
-            GENESIS.to_string(),
-            Wallet {
-                balance: 1000.0,
-                staked: 0.0,
-                pending_unstakes: VecDeque::new(),
-            },
-        );
+        let mut wallets = Wallets::default();
+        wallets
+            .wallets
+            .insert(GENESIS.to_string(), Wallet::new(1000.));
         let (state_root, _) = Self::compute_state_root(&wallets);
         let genesis_block = Block::new(
             vec![Transaction::new(
@@ -94,13 +64,14 @@ impl Blockchain {
         }
     }
 
-    fn compute_state_root(wallets: &HashMap<String, Wallet>) -> (String, Vec<Vec<String>>) {
-        if wallets.is_empty() {
+    fn compute_state_root(wallets: &Wallets) -> (String, Vec<Vec<String>>) {
+        if wallets.wallets.is_empty() {
             let zero_hash = format!("{:x}", Sha256::new().finalize());
             return (zero_hash, vec![]);
         }
 
         let mut leaves: Vec<(String, String)> = wallets
+            .wallets
             .iter()
             .map(|(user, wallet)| {
                 let data = format!("{}{}", user, serde_json::to_string(wallet).unwrap());
@@ -142,7 +113,7 @@ impl Blockchain {
         let leaf_data = format!(
             "{}{}",
             user,
-            serde_json::to_string(self.wallets.get(user)?).unwrap()
+            serde_json::to_string(self.wallets.wallets.get(user)?).unwrap()
         );
         let mut hasher = Sha256::new();
         hasher.update(&leaf_data);
@@ -170,7 +141,7 @@ impl Blockchain {
         block_height: usize,
     ) -> bool {
         let block = self.chain.get(block_height).unwrap();
-        let wallet = match self.wallets.get(user) {
+        let wallet = match self.wallets.wallets.get(user) {
             Some(w) => w,
             None => return false,
         };
@@ -198,7 +169,7 @@ impl Blockchain {
 
     fn get_stake_pool(&self) -> HashMap<String, f64> {
         let mut stake_pool = HashMap::new();
-        for (user, wallet) in &self.wallets {
+        for (user, wallet) in &self.wallets.wallets {
             if wallet.staked > 0.0 {
                 stake_pool.insert(user.clone(), wallet.staked);
             }
@@ -279,7 +250,7 @@ impl Blockchain {
 
     fn return_stakes(&mut self, block_height: usize) {
         let epoch = self.get_epoch(block_height);
-        for wallet in self.wallets.values_mut() {
+        for wallet in self.wallets.wallets.values_mut() {
             while let Some(pending) = wallet.pending_unstakes.front() {
                 if pending.effective_epoch <= epoch {
                     wallet.balance += wallet.pending_unstakes.pop_front().unwrap().amount;
@@ -297,7 +268,7 @@ impl Blockchain {
 
         let total_reward = self.total_staked * REWARD_RATE_PER_EPOCH;
         for user in &self.current_epoch_validators {
-            let wallet = self.wallets.get_mut(user).unwrap();
+            let wallet = self.wallets.wallets.get_mut(user).unwrap();
             let user_reward = (wallet.staked / self.total_staked) * total_reward;
             wallet.balance += user_reward;
         }
@@ -411,7 +382,7 @@ impl Blockchain {
         for tx in &transactions {
             match &tx.tx_type {
                 TransactionType::Stake { user, amount } => {
-                    let wallet = self.wallets.get_mut(user).ok_or("User not found")?;
+                    let wallet = self.wallets.wallets.get_mut(user).ok_or("User not found")?;
                     if wallet.balance < *amount + tx.fee {
                         return Err("Insufficient ballance to stake".to_string());
                     }
@@ -420,7 +391,7 @@ impl Blockchain {
                 }
                 TransactionType::Unstake { user, amount } => {
                     let unstake_epoch = self.get_epoch(block_height) + 2;
-                    let wallet = self.wallets.get_mut(user).ok_or("User not found")?;
+                    let wallet = self.wallets.wallets.get_mut(user).ok_or("User not found")?;
                     if wallet.staked < *amount {
                         return Err("Insufficient stake to unstake".to_string());
                     }
@@ -439,16 +410,20 @@ impl Blockchain {
                     receiver,
                     amount,
                 } => {
-                    let sender_wallet = self.wallets.get_mut(sender).ok_or("Sender not found")?;
+                    let sender_wallet = self
+                        .wallets
+                        .wallets
+                        .get_mut(sender)
+                        .ok_or("Sender not found")?;
                     if sender_wallet.balance < *amount + tx.fee {
                         return Err("Insufficient balance".to_string());
                     }
                     sender_wallet.balance -= *amount + tx.fee;
-                    let receiver_wallet = self.wallets.entry(receiver.clone()).or_insert(Wallet {
-                        balance: 0.0,
-                        staked: 0.0,
-                        pending_unstakes: VecDeque::new(),
-                    });
+                    let receiver_wallet = self
+                        .wallets
+                        .wallets
+                        .entry(receiver.clone())
+                        .or_insert(Wallet::new(0.));
                     receiver_wallet.balance += *amount;
                 }
                 TransactionType::DeployContract { code } => {
@@ -459,8 +434,11 @@ impl Blockchain {
                 }
                 TransactionType::CallContract { contract_address } => {
                     // Deduct the fee from the sender (Alice)
-                    let sender_wallet =
-                        self.wallets.get_mut(&tx.sender).ok_or("Sender not found")?;
+                    let sender_wallet = self
+                        .wallets
+                        .wallets
+                        .get_mut(&tx.sender)
+                        .ok_or("Sender not found")?;
                     if sender_wallet.balance < tx.fee {
                         return Err("Insufficient balance for fee".to_string());
                     }
@@ -482,7 +460,7 @@ impl Blockchain {
             validator.clone(),
             state_root,
         );
-        let validator_wallet = self.wallets.get_mut(&validator).unwrap();
+        let validator_wallet = self.wallets.wallets.get_mut(&validator).unwrap();
         validator_wallet.balance += new_block.total_fees;
 
         self.chain.push(new_block);
@@ -605,7 +583,7 @@ fn stake_host(
     }
     let blockchain: &mut Blockchain = unsafe { &mut *(blockchain_ptr as *mut Blockchain) };
     let user = caller.data().1.clone();
-    let wallet = match blockchain.wallets.get_mut(&user) {
+    let wallet = match blockchain.wallets.wallets.get_mut(&user) {
         Some(wallet) => wallet,
         None => {
             println!("Error: User {} not found", user);
@@ -636,7 +614,7 @@ fn unstake_host(
     let effective_epoch = blockchain.get_epoch(block_height) + 2;
     //let contract_address = caller.data().clone();
     let user = caller.data().1.clone();
-    let wallet = match blockchain.wallets.get_mut(&user) {
+    let wallet = match blockchain.wallets.wallets.get_mut(&user) {
         Some(wallet) => wallet,
         None => {
             println!("Error: User {} not found", user);
@@ -678,6 +656,7 @@ fn get_balance_host(
     };
     blockchain
         .wallets
+        .wallets
         .get(&user)
         .map(|w| w.balance)
         .unwrap_or(0.0)
@@ -710,16 +689,16 @@ fn transfer_host(
     if amount <= 0.0 {
         return 1; //Failure
     }
-    let from_wallet = match blockchain.wallets.get_mut(&from) {
+    let from_wallet = match blockchain.wallets.wallets.get_mut(&from) {
         Some(wallet) => wallet,
         None => return 1,
     };
     from_wallet.balance -= amount;
-    let to_wallet = blockchain.wallets.entry(to.clone()).or_insert(Wallet {
-        balance: 0.0,
-        staked: 0.0,
-        pending_unstakes: VecDeque::new(),
-    });
+    let to_wallet = blockchain
+        .wallets
+        .wallets
+        .entry(to.clone())
+        .or_insert(Wallet::new(0.));
     to_wallet.balance += amount;
     0 // Success
 }

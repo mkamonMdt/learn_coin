@@ -6,7 +6,8 @@ fn main() {
 mod tests {
     use bchain::{
         primitives::transaction::{Transaction, TransactionType},
-        Blockchain, Wallet,
+        wallets::Wallet,
+        Blockchain,
     };
 
     #[test]
@@ -14,6 +15,7 @@ mod tests {
         let mut blockchain = Blockchain::new();
 
         blockchain
+            .wallets
             .wallets
             .insert("Alice".to_string(), Wallet::new(500.0));
 
@@ -46,6 +48,7 @@ mod tests {
 
         blockchain
             .wallets
+            .wallets
             .insert("Alice".to_string(), Wallet::new(500.0));
 
         let wasm_bytes =
@@ -72,8 +75,8 @@ mod tests {
         }
 
         // Verify the results
-        let alice_wallet = blockchain.wallets.get("Alice").unwrap();
-        let bob_wallet = blockchain.wallets.get("Bob").unwrap();
+        let alice_wallet = blockchain.wallets.wallets.get("Alice").unwrap();
+        let bob_wallet = blockchain.wallets.wallets.get("Bob").unwrap();
 
         // After 5 calls:
         // - Counter should be 5
