@@ -2,6 +2,7 @@ pub mod bchain_error;
 pub mod message;
 mod patricia_merkle_trie;
 pub mod primitives;
+mod static_config;
 pub mod wallets;
 
 use patricia_merkle_trie::state_root;
@@ -27,7 +28,6 @@ pub struct Blockchain {
     pub wallets: Wallets,
     contracts: HashMap<String, Vec<u8>>,
     contract_storage: HashMap<String, HashMap<String, Vec<u8>>>,
-    slots_per_epoch: usize,
     current_epoch_validators: Vec<String>,
     next_epoch_validators: Vec<String>,
     total_staked: f64,
@@ -59,16 +59,15 @@ impl Blockchain {
             wallets,
             contracts: HashMap::new(),
             contract_storage: HashMap::new(),
-            slots_per_epoch: EPOCH_HEIGHT,
             current_epoch_validators: vec![GENESIS.to_string(); EPOCH_HEIGHT],
             next_epoch_validators: vec![GENESIS.to_string(); EPOCH_HEIGHT],
             total_staked: 0.0,
         }
     }
 
-    fn get_stake_pool(&self) -> HashMap<String, f64> {
+    fn get_stake_pool(wallets: &Wallets) -> HashMap<String, f64> {
         let mut stake_pool = HashMap::new();
-        for (user, wallet) in &self.wallets.wallets {
+        for (user, wallet) in &wallets.wallets {
             if wallet.staked > 0.0 {
                 stake_pool.insert(user.clone(), wallet.staked);
             }
@@ -76,20 +75,20 @@ impl Blockchain {
         stake_pool
     }
 
-    fn get_epoch(&self, block_height: usize) -> usize {
-        block_height / self.slots_per_epoch
+    fn get_epoch(block_height: usize) -> usize {
+        block_height / EPOCH_HEIGHT
     }
 
-    fn get_validators_consensus_block(&self, epoch: usize) -> usize {
+    fn get_validators_consensus_block(epoch: usize) -> usize {
         if epoch < 2 {
             0
         } else {
-            (epoch - 1) * self.slots_per_epoch - 1
+            (epoch - 1) * EPOCH_HEIGHT - 1
         }
     }
 
     fn get_epoch_seed(&self, epoch: usize) -> String {
-        match self.get_validators_consensus_block(epoch) {
+        match Self::get_validators_consensus_block(epoch) {
             x if x < 2 => x.to_string(),
             validators_consensus_block => {
                 assert!(
@@ -104,9 +103,8 @@ impl Blockchain {
     }
 
     fn get_validator_for_slots(
-        &self,
         stake_pool: &HashMap<String, f64>,
-        epoch: usize,
+        seed: String,
         slot: usize,
     ) -> String {
         let total_stake: f64 = stake_pool.values().sum();
@@ -114,7 +112,6 @@ impl Blockchain {
             return GENESIS.to_string();
         }
 
-        let seed = self.get_epoch_seed(epoch);
         let slot_seed = format!("{}{}", seed, slot);
         let mut hasher = Sha256::new();
         hasher.update(&slot_seed);
@@ -132,24 +129,24 @@ impl Blockchain {
         GENESIS.to_string()
     }
 
-    fn update_validators(&mut self, block_height: usize) {
+    fn update_validators(&mut self, current_epoch: usize) {
         std::mem::swap(
             &mut self.current_epoch_validators,
             &mut self.next_epoch_validators,
         );
-        let next_epoch = self.get_epoch(block_height) + 1;
-        let stake_pool = self.get_stake_pool();
+        let stake_pool = Self::get_stake_pool(&self.wallets);
+        let next_epoch = current_epoch + 1;
+        let seed = self.get_epoch_seed(next_epoch);
         self.total_staked = stake_pool.values().sum();
 
         for slot_in_epoch in 0..self.next_epoch_validators.len() {
             self.next_epoch_validators[slot_in_epoch] =
-                self.get_validator_for_slots(&stake_pool, next_epoch, slot_in_epoch);
+                Self::get_validator_for_slots(&stake_pool, seed.clone(), slot_in_epoch);
         }
     }
 
-    fn return_stakes(&mut self, block_height: usize) {
-        let epoch = self.get_epoch(block_height);
-        for wallet in self.wallets.wallets.values_mut() {
+    fn return_stakes(wallets: &mut Wallets, epoch: usize) {
+        for wallet in wallets.wallets.values_mut() {
             while let Some(pending) = wallet.pending_unstakes.front() {
                 if pending.effective_epoch <= epoch {
                     wallet.balance += wallet.pending_unstakes.pop_front().unwrap().amount;
@@ -175,14 +172,15 @@ impl Blockchain {
 
     fn on_first_block_of_epoch(&mut self) {
         let block_height = self.chain.len();
-        let is_epochs_first_block = (block_height % self.slots_per_epoch) == 0;
+        let is_epochs_first_block = (block_height % EPOCH_HEIGHT) == 0;
         if !is_epochs_first_block {
             return;
         }
 
+        let epoch = Self::get_epoch(block_height);
         self.distribute_rewards();
-        self.update_validators(block_height);
-        self.return_stakes(block_height);
+        self.update_validators(epoch);
+        Self::return_stakes(&mut self.wallets, epoch);
     }
 
     fn execute_contract(
@@ -270,7 +268,7 @@ impl Blockchain {
 
     pub fn add_block(&mut self, transactions: Vec<Transaction>) -> Result<(), String> {
         let block_height = self.chain.len();
-        let slot_in_epoch = block_height % self.slots_per_epoch;
+        let slot_in_epoch = block_height % EPOCH_HEIGHT;
         let validator = self
             .current_epoch_validators
             .get(slot_in_epoch)
@@ -289,7 +287,7 @@ impl Blockchain {
                     wallet.staked += *amount;
                 }
                 TransactionType::Unstake { user, amount } => {
-                    let unstake_epoch = self.get_epoch(block_height) + 2;
+                    let unstake_epoch = Self::get_epoch(block_height) + 2;
                     let wallet = self.wallets.wallets.get_mut(user).ok_or("User not found")?;
                     if wallet.staked < *amount {
                         return Err("Insufficient stake to unstake".to_string());
@@ -510,7 +508,7 @@ fn unstake_host(
     }
     let blockchain: &mut Blockchain = unsafe { &mut *(blockchain_ptr as *mut Blockchain) };
     let block_height = blockchain.chain.len();
-    let effective_epoch = blockchain.get_epoch(block_height) + 2;
+    let effective_epoch = Blockchain::get_epoch(block_height) + 2;
     //let contract_address = caller.data().clone();
     let user = caller.data().1.clone();
     let wallet = match blockchain.wallets.wallets.get_mut(&user) {
@@ -756,10 +754,10 @@ mod tests {
     fn test_validator_consensus_block() {
         let blockchain = Blockchain::new();
 
-        assert_eq!(blockchain.get_validators_consensus_block(0), 0);
-        assert_eq!(blockchain.get_validators_consensus_block(1), 0);
+        assert_eq!(Blockchain::get_validators_consensus_block(0), 0);
+        assert_eq!(Blockchain::get_validators_consensus_block(1), 0);
         assert_eq!(
-            blockchain.get_validators_consensus_block(2),
+            Blockchain::get_validators_consensus_block(2),
             EPOCH_HEIGHT - 1
         );
     }
