@@ -1,5 +1,6 @@
 # TODO list (Found at|Done at| Description)
 
+- [ ] [69ff4a8](https://github.com/mkamonMdt/learn_coin/commit/69ff4a8ed3cedd3cc5f4edd26bfa47c367a0e753)|| String are widely used in place of const-in-lenght hash. The better way would be to use some stack-held container like an array. The problem will arrise if hash function would be upgraded. Can be sloved with enum wrapping versioning but requires more analysis. 
 - [ ] [16febf1](https://github.com/mkamonMdt/learn_coin/commit/16febf1060e7e75621c5849085a88d8a247b35c2)|| Patricia-Merkle-Tire is based on wallets' internal hash map, can it be made container-independent? 
 - [ ] [16febf1](https://github.com/mkamonMdt/learn_coin/commit/16febf1060e7e75621c5849085a88d8a247b35c2)|| Patricia-Merkle-Tire mod: Tests, improve code structure, prepare documentation 
 - [ ] [954ffc2](https://github.com/mkamonmdt/learn_coin/commit/954ffc26e38611ad57fc77fb2a36f769cdec77cb)|| Opcodes are fun, can we make them binary-compatible?
