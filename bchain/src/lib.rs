@@ -1,21 +1,18 @@
 pub mod bchain_error;
 pub mod message;
-mod patricia_merkle_trie;
 pub mod primitives;
-mod static_config;
 pub mod wallets;
 
+mod config;
+mod patricia_merkle_trie;
+
+use config::{config_utils, static_config};
 use patricia_merkle_trie::state_root;
 use primitives::{block::Block, transaction::*};
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, vec};
 use wallets::{PendingUnstake, Wallet, Wallets};
 use wasmi::{Caller, Engine, Extern, Func, Linker, Module, Store};
-
-const EPOCH_HEIGHT: usize = 10;
-const BLOCK_CHAIN_WORTH: f64 = 1000.0;
-const GENESIS: &str = "Genesis";
-const REWARD_RATE_PER_EPOCH: f64 = 0.00001;
 
 #[derive(Debug)]
 struct ContractState {
@@ -38,20 +35,20 @@ impl Blockchain {
         let mut wallets = Wallets::default();
         wallets
             .wallets
-            .insert(GENESIS.to_string(), Wallet::new(1000.));
+            .insert(static_config::GENESIS.to_string(), Wallet::new(1000.));
         let (state_root, _) = state_root::compute(&wallets);
         let genesis_block = Block::new(
             vec![Transaction::new(
-                GENESIS.to_string(),
+                static_config::GENESIS.to_string(),
                 TransactionType::Transfer {
-                    sender: GENESIS.to_string(),
+                    sender: static_config::GENESIS.to_string(),
                     receiver: "System".to_string(),
-                    amount: BLOCK_CHAIN_WORTH,
+                    amount: static_config::BLOCK_CHAIN_WORTH,
                 },
                 0.0,
             )],
             "0".to_string(),
-            GENESIS.to_string(),
+            static_config::GENESIS.to_string(),
             state_root,
         );
         Blockchain {
@@ -59,8 +56,14 @@ impl Blockchain {
             wallets,
             contracts: HashMap::new(),
             contract_storage: HashMap::new(),
-            current_epoch_validators: vec![GENESIS.to_string(); EPOCH_HEIGHT],
-            next_epoch_validators: vec![GENESIS.to_string(); EPOCH_HEIGHT],
+            current_epoch_validators: vec![
+                static_config::GENESIS.to_string();
+                static_config::EPOCH_HEIGHT
+            ],
+            next_epoch_validators: vec![
+                static_config::GENESIS.to_string();
+                static_config::EPOCH_HEIGHT
+            ],
             total_staked: 0.0,
         }
     }
@@ -75,20 +78,8 @@ impl Blockchain {
         stake_pool
     }
 
-    fn get_epoch(block_height: usize) -> usize {
-        block_height / EPOCH_HEIGHT
-    }
-
-    fn get_validators_consensus_block(epoch: usize) -> usize {
-        if epoch < 2 {
-            0
-        } else {
-            (epoch - 1) * EPOCH_HEIGHT - 1
-        }
-    }
-
     fn get_epoch_seed(&self, epoch: usize) -> String {
-        match Self::get_validators_consensus_block(epoch) {
+        match config_utils::get_validators_consensus_block(epoch) {
             x if x < 2 => x.to_string(),
             validators_consensus_block => {
                 assert!(
@@ -109,7 +100,7 @@ impl Blockchain {
     ) -> String {
         let total_stake: f64 = stake_pool.values().sum();
         if total_stake == 0.0 {
-            return GENESIS.to_string();
+            return static_config::GENESIS.to_string();
         }
 
         let slot_seed = format!("{}{}", seed, slot);
@@ -126,7 +117,7 @@ impl Blockchain {
                 return user.clone();
             }
         }
-        GENESIS.to_string()
+        static_config::GENESIS.to_string()
     }
 
     fn update_validators(&mut self, current_epoch: usize) {
@@ -162,7 +153,7 @@ impl Blockchain {
             return;
         }
 
-        let total_reward = self.total_staked * REWARD_RATE_PER_EPOCH;
+        let total_reward = self.total_staked * static_config::REWARD_RATE_PER_EPOCH;
         for user in &self.current_epoch_validators {
             let wallet = self.wallets.wallets.get_mut(user).unwrap();
             let user_reward = (wallet.staked / self.total_staked) * total_reward;
@@ -172,12 +163,12 @@ impl Blockchain {
 
     fn on_first_block_of_epoch(&mut self) {
         let block_height = self.chain.len();
-        let is_epochs_first_block = (block_height % EPOCH_HEIGHT) == 0;
+        let is_epochs_first_block = (block_height % static_config::EPOCH_HEIGHT) == 0;
         if !is_epochs_first_block {
             return;
         }
 
-        let epoch = Self::get_epoch(block_height);
+        let epoch = config_utils::get_epoch(block_height);
         self.distribute_rewards();
         self.update_validators(epoch);
         Self::return_stakes(&mut self.wallets, epoch);
@@ -268,7 +259,7 @@ impl Blockchain {
 
     pub fn add_block(&mut self, transactions: Vec<Transaction>) -> Result<(), String> {
         let block_height = self.chain.len();
-        let slot_in_epoch = block_height % EPOCH_HEIGHT;
+        let slot_in_epoch = block_height % static_config::EPOCH_HEIGHT;
         let validator = self
             .current_epoch_validators
             .get(slot_in_epoch)
@@ -287,7 +278,7 @@ impl Blockchain {
                     wallet.staked += *amount;
                 }
                 TransactionType::Unstake { user, amount } => {
-                    let unstake_epoch = Self::get_epoch(block_height) + 2;
+                    let unstake_epoch = config_utils::get_epoch(block_height) + 2;
                     let wallet = self.wallets.wallets.get_mut(user).ok_or("User not found")?;
                     if wallet.staked < *amount {
                         return Err("Insufficient stake to unstake".to_string());
@@ -508,7 +499,7 @@ fn unstake_host(
     }
     let blockchain: &mut Blockchain = unsafe { &mut *(blockchain_ptr as *mut Blockchain) };
     let block_height = blockchain.chain.len();
-    let effective_epoch = Blockchain::get_epoch(block_height) + 2;
+    let effective_epoch = config_utils::get_epoch(block_height) + 2;
     //let contract_address = caller.data().clone();
     let user = caller.data().1.clone();
     let wallet = match blockchain.wallets.wallets.get_mut(&user) {
@@ -631,9 +622,9 @@ mod tests {
     fn initiate_account(blockchain: &mut Blockchain, user: String) {
         blockchain
             .add_block(vec![Transaction::new(
-                GENESIS.to_string(),
+                static_config::GENESIS.to_string(),
                 TransactionType::Transfer {
-                    sender: GENESIS.to_string(),
+                    sender: static_config::GENESIS.to_string(),
                     receiver: user,
                     amount: INITIAL_AMOUNT,
                 },
@@ -673,7 +664,7 @@ mod tests {
         assert_eq!(blockchain.chain.len(), 1);
         let first_block = blockchain.chain.first().unwrap();
         assert_eq!(first_block.previous_hash, "0".to_owned());
-        assert_eq!(first_block.validator, GENESIS.to_owned());
+        assert_eq!(first_block.validator, static_config::GENESIS.to_owned());
     }
 
     #[test]
@@ -754,11 +745,11 @@ mod tests {
     fn test_validator_consensus_block() {
         let blockchain = Blockchain::new();
 
-        assert_eq!(Blockchain::get_validators_consensus_block(0), 0);
-        assert_eq!(Blockchain::get_validators_consensus_block(1), 0);
+        assert_eq!(config_utils::get_validators_consensus_block(0), 0);
+        assert_eq!(config_utils::get_validators_consensus_block(1), 0);
         assert_eq!(
-            Blockchain::get_validators_consensus_block(2),
-            EPOCH_HEIGHT - 1
+            config_utils::get_validators_consensus_block(2),
+            static_config::EPOCH_HEIGHT - 1
         );
     }
 }
