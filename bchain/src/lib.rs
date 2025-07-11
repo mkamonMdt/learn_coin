@@ -3,9 +3,11 @@ pub mod message;
 pub mod primitives;
 pub mod wallets;
 
+mod chain;
 mod config;
 mod patricia_merkle_trie;
 
+use chain::Chain;
 use config::{config_utils, static_config};
 use patricia_merkle_trie::state_root;
 use primitives::{block::Block, transaction::*};
@@ -21,7 +23,7 @@ struct ContractState {
 
 #[derive(Debug)]
 pub struct Blockchain {
-    pub chain: Vec<Block>,
+    chain: Chain,
     pub wallets: Wallets,
     contracts: HashMap<String, Vec<u8>>,
     contract_storage: HashMap<String, HashMap<String, Vec<u8>>>,
@@ -37,22 +39,8 @@ impl Blockchain {
             .wallets
             .insert(static_config::GENESIS.to_string(), Wallet::new(1000.));
         let (state_root, _) = state_root::compute(&wallets);
-        let genesis_block = Block::new(
-            vec![Transaction::new(
-                static_config::GENESIS.to_string(),
-                TransactionType::Transfer {
-                    sender: static_config::GENESIS.to_string(),
-                    receiver: "System".to_string(),
-                    amount: static_config::BLOCK_CHAIN_WORTH,
-                },
-                0.0,
-            )],
-            "0".to_string(),
-            static_config::GENESIS.to_string(),
-            state_root,
-        );
         Blockchain {
-            chain: vec![genesis_block],
+            chain: Chain::new(state_root),
             wallets,
             contracts: HashMap::new(),
             contract_storage: HashMap::new(),
@@ -88,7 +76,11 @@ impl Blockchain {
                     validators_consensus_block,
                     epoch
                 );
-                self.chain[validators_consensus_block].hash.clone()
+                self.chain
+                    .get_block_by_idx(validators_consensus_block)
+                    .unwrap()
+                    .hash
+                    .clone()
             }
         }
     }
@@ -246,7 +238,7 @@ impl Blockchain {
         if block.hash != block.calculate_hash() {
             return Err("Block hash corrupted".to_string());
         }
-        if let Some(prev_block) = self.chain.last() {
+        if let Some(prev_block) = self.chain.get_last_block() {
             if prev_block.hash != block.previous_hash {
                 return Err(format!(
                     "Block's previous hash does not match current tip at height={}",
@@ -265,7 +257,7 @@ impl Blockchain {
             .get(slot_in_epoch)
             .ok_or("No validators available")?
             .clone();
-        let previous_block = self.chain.last().unwrap().clone();
+        let previous_block = self.chain.get_last_block().unwrap().clone();
 
         for tx in &transactions {
             match &tx.tx_type {
@@ -357,8 +349,8 @@ impl Blockchain {
 
     fn is_valid(&self) -> bool {
         for i in 1..self.chain.len() {
-            let current = &self.chain[i];
-            let previous = &self.chain[i - 1];
+            let current = &self.chain.get_block_by_idx(i).unwrap();
+            let previous = &self.chain.get_block_by_idx(i - 1).unwrap();
 
             if current.hash != current.calculate_hash() || current.previous_hash != previous.hash {
                 return false;
@@ -662,7 +654,7 @@ mod tests {
     fn test_genesis_block() {
         let blockchain = Blockchain::new();
         assert_eq!(blockchain.chain.len(), 1);
-        let first_block = blockchain.chain.first().unwrap();
+        let first_block = blockchain.chain.get_block_by_idx(0).unwrap();
         assert_eq!(first_block.previous_hash, "0".to_owned());
         assert_eq!(first_block.validator, static_config::GENESIS.to_owned());
     }
@@ -670,7 +662,7 @@ mod tests {
     #[test]
     fn test_ok_when_put_valid_stake() {
         let mut blockchain = Blockchain::new();
-        println!("Genesis block: {:?}", blockchain.chain[0]);
+        println!("Genesis block: {:?}", blockchain.chain.get_block_by_idx(0));
 
         let account_1 = "Allice".to_string();
         initiate_account(&mut blockchain, account_1.clone());
@@ -680,7 +672,10 @@ mod tests {
     #[test]
     fn test_error_when_put_too_high_stake() {
         let mut blockchain = Blockchain::new();
-        println!("Genesis block: {:?}", blockchain.chain[0]);
+        println!(
+            "Genesis block: {:?}",
+            blockchain.chain.get_block_by_idx(0).unwrap()
+        );
 
         let account_1 = "Allice".to_string();
         initiate_account(&mut blockchain, account_1.clone());
@@ -690,7 +685,7 @@ mod tests {
     #[test]
     fn test_error_when_too_high_stake_put_after_tx() {
         let mut blockchain = Blockchain::new();
-        println!("Genesis block: {:?}", blockchain.chain[0]);
+        println!("Genesis block: {:?}", blockchain.chain.get_block_by_idx(0));
 
         let account_1 = "Allice".to_string();
         let account_2 = "Bob".to_string();
@@ -710,7 +705,7 @@ mod tests {
     #[test]
     fn test_error_when_too_high_tx_after_stake_put() {
         let mut blockchain = Blockchain::new();
-        println!("Genesis block: {:?}", blockchain.chain[0]);
+        println!("Genesis block: {:?}", blockchain.chain.get_block_by_idx(0));
 
         let account_1 = "Allice".to_string();
         let account_2 = "Bob".to_string();
@@ -724,7 +719,7 @@ mod tests {
     #[test]
     fn test_ok_when_high_stake_put_after_receiving() {
         let mut blockchain = Blockchain::new();
-        println!("Genesis block: {:?}", blockchain.chain[0]);
+        println!("Genesis block: {:?}", blockchain.chain.get_block_by_idx(0));
 
         let account_1 = "Allice".to_string();
         let account_2 = "Bob".to_string();
