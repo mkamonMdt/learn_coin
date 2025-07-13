@@ -1,5 +1,10 @@
 # TODO list (Found at|Done at| Description)
 
+- [ ] [8dd99c7](https://github.com/mkamonMdt/learn_coin/commit/8dd99c7e88a1932122b8ab85156fb19fa56e5586)|| stake_pool is explict String-key HashMap
+- [ ] [8dd99c7](https://github.com/mkamonMdt/learn_coin/commit/8dd99c7e88a1932122b8ab85156fb19fa56e5586)|| Validators for given epoch are kept as Vec<String> althugh the
+length of the container cannot be changed (at the moment) 
+- [ ] [8dd99c7](https://github.com/mkamonMdt/learn_coin/commit/8dd99c7e88a1932122b8ab85156fb19fa56e5586)|| current_epoch validators are return so that the vec can be iterated, maybe some interator implementation or use(Fn(Validator)) could improve the design
+- [ ] [8dd99c7](https://github.com/mkamonMdt/learn_coin/commit/8dd99c7e88a1932122b8ab85156fb19fa56e5586)|| update_validators repeatedly perform seed.clone() for all validators
 - [ ] [69ff4a8](https://github.com/mkamonMdt/learn_coin/commit/69ff4a8ed3cedd3cc5f4edd26bfa47c367a0e753)|| String are widely used in place of const-in-lenght hash. The better way would be to use some stack-held container like an array. The problem will arrise if hash function would be upgraded. Can be sloved with enum wrapping versioning but requires more analysis. 
 - [ ] [16febf1](https://github.com/mkamonMdt/learn_coin/commit/16febf1060e7e75621c5849085a88d8a247b35c2)|| Patricia-Merkle-Tire is based on wallets' internal hash map, can it be made container-independent? 
 - [ ] [16febf1](https://github.com/mkamonMdt/learn_coin/commit/16febf1060e7e75621c5849085a88d8a247b35c2)|| Patricia-Merkle-Tire mod: Tests, improve code structure, prepare documentation 
