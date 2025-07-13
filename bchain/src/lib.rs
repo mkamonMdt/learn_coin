@@ -6,13 +6,14 @@ pub mod wallets;
 mod chain;
 mod config;
 mod patricia_merkle_trie;
+mod validators;
 
 use chain::Chain;
 use config::{config_utils, static_config};
 use patricia_merkle_trie::state_root;
 use primitives::{block::Block, transaction::*};
-use sha2::{Digest, Sha256};
-use std::{collections::HashMap, vec};
+use std::collections::HashMap;
+use validators::TwoEpochValidators;
 use wallets::{PendingUnstake, Wallet, Wallets};
 use wasmi::{Caller, Engine, Extern, Func, Linker, Module, Store};
 
@@ -27,8 +28,7 @@ pub struct Blockchain {
     pub wallets: Wallets,
     contracts: HashMap<String, Vec<u8>>,
     contract_storage: HashMap<String, HashMap<String, Vec<u8>>>,
-    current_epoch_validators: Vec<String>,
-    next_epoch_validators: Vec<String>,
+    validators: TwoEpochValidators,
     total_staked: f64,
 }
 
@@ -44,26 +44,9 @@ impl Blockchain {
             wallets,
             contracts: HashMap::new(),
             contract_storage: HashMap::new(),
-            current_epoch_validators: vec![
-                static_config::GENESIS.to_string();
-                static_config::EPOCH_HEIGHT
-            ],
-            next_epoch_validators: vec![
-                static_config::GENESIS.to_string();
-                static_config::EPOCH_HEIGHT
-            ],
+            validators: TwoEpochValidators::new(static_config::EPOCH_HEIGHT),
             total_staked: 0.0,
         }
-    }
-
-    fn get_stake_pool(wallets: &Wallets) -> HashMap<String, f64> {
-        let mut stake_pool = HashMap::new();
-        for (user, wallet) in &wallets.wallets {
-            if wallet.staked > 0.0 {
-                stake_pool.insert(user.clone(), wallet.staked);
-            }
-        }
-        stake_pool
     }
 
     fn get_epoch_seed(&self, epoch: usize) -> String {
@@ -85,49 +68,6 @@ impl Blockchain {
         }
     }
 
-    fn get_validator_for_slots(
-        stake_pool: &HashMap<String, f64>,
-        seed: String,
-        slot: usize,
-    ) -> String {
-        let total_stake: f64 = stake_pool.values().sum();
-        if total_stake == 0.0 {
-            return static_config::GENESIS.to_string();
-        }
-
-        let slot_seed = format!("{}{}", seed, slot);
-        let mut hasher = Sha256::new();
-        hasher.update(&slot_seed);
-        let result = hasher.finalize();
-        let seed_value = u64::from_le_bytes(result[..8].try_into().unwrap());
-        let random_point = seed_value as f64 % total_stake;
-
-        let mut cumulative = 0.0;
-        for (user, stake) in stake_pool {
-            cumulative += stake;
-            if cumulative >= random_point {
-                return user.clone();
-            }
-        }
-        static_config::GENESIS.to_string()
-    }
-
-    fn update_validators(&mut self, current_epoch: usize) {
-        std::mem::swap(
-            &mut self.current_epoch_validators,
-            &mut self.next_epoch_validators,
-        );
-        let stake_pool = Self::get_stake_pool(&self.wallets);
-        let next_epoch = current_epoch + 1;
-        let seed = self.get_epoch_seed(next_epoch);
-        self.total_staked = stake_pool.values().sum();
-
-        for slot_in_epoch in 0..self.next_epoch_validators.len() {
-            self.next_epoch_validators[slot_in_epoch] =
-                Self::get_validator_for_slots(&stake_pool, seed.clone(), slot_in_epoch);
-        }
-    }
-
     fn return_stakes(wallets: &mut Wallets, epoch: usize) {
         for wallet in wallets.wallets.values_mut() {
             while let Some(pending) = wallet.pending_unstakes.front() {
@@ -140,13 +80,23 @@ impl Blockchain {
         }
     }
 
+    fn get_stake_pool(wallets: &Wallets) -> HashMap<String, f64> {
+        let mut stake_pool = HashMap::new();
+        for (user, wallet) in &wallets.wallets {
+            if wallet.staked > 0.0 {
+                stake_pool.insert(user.clone(), wallet.staked);
+            }
+        }
+        stake_pool
+    }
+
     fn distribute_rewards(&mut self) {
         if self.total_staked == 0.0 {
             return;
         }
 
         let total_reward = self.total_staked * static_config::REWARD_RATE_PER_EPOCH;
-        for user in &self.current_epoch_validators {
+        for user in self.validators.get_current_epoch_validators() {
             let wallet = self.wallets.wallets.get_mut(user).unwrap();
             let user_reward = (wallet.staked / self.total_staked) * total_reward;
             wallet.balance += user_reward;
@@ -161,8 +111,12 @@ impl Blockchain {
         }
 
         let epoch = config_utils::get_epoch(block_height);
+        let next_epoch = epoch + 1;
+        let seed = self.get_epoch_seed(next_epoch);
         self.distribute_rewards();
-        self.update_validators(epoch);
+        let stake_pool = Self::get_stake_pool(&self.wallets);
+        self.total_staked = stake_pool.values().sum();
+        self.validators.update_validators(&stake_pool, seed);
         Self::return_stakes(&mut self.wallets, epoch);
     }
 
@@ -253,7 +207,8 @@ impl Blockchain {
         let block_height = self.chain.len();
         let slot_in_epoch = block_height % static_config::EPOCH_HEIGHT;
         let validator = self
-            .current_epoch_validators
+            .validators
+            .get_current_epoch_validators()
             .get(slot_in_epoch)
             .ok_or("No validators available")?
             .clone();
