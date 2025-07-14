@@ -1,6 +1,6 @@
 use crate::bchain_error::BChainError;
-use crate::primitives::block::Block;
-use crate::primitives::transaction::Transaction;
+use crate::primitives::Block;
+use crate::primitives::Transaction;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]

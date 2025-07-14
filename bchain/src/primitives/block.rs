@@ -1,4 +1,4 @@
-use crate::Transaction;
+use crate::primitives::Transaction;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

@@ -1,6 +1,5 @@
 use crate::config::static_config;
-use crate::primitives::block::Block;
-use crate::primitives::transaction::{Transaction, TransactionType};
+use crate::primitives::{Block, Transaction, TransactionType};
 
 #[derive(Debug)]
 pub struct Chain {

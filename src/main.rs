@@ -5,8 +5,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use bchain::{
-        primitives::transaction::{Transaction, TransactionType},
-        wallets::Wallet,
+        primitives::{Transaction, TransactionType, Wallet},
         Blockchain,
     };
 

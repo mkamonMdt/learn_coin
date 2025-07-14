@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 
 #[derive(Debug, Serialize)]
 pub struct PendingUnstake {
@@ -22,9 +22,4 @@ impl Wallet {
             pending_unstakes: VecDeque::new(),
         }
     }
-}
-
-#[derive(Default, Debug)]
-pub struct Wallets {
-    pub wallets: HashMap<String, Wallet>,
 }

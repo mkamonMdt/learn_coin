@@ -1,5 +1,5 @@
 use crate::config::config_utils;
-use crate::wallets::PendingUnstake;
+use crate::primitives::PendingUnstake;
 use crate::Blockchain;
 use wasmi::Caller;
 

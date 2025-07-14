@@ -1,21 +1,21 @@
 pub mod bchain_error;
 pub mod message;
 pub mod primitives;
-pub mod wallets;
 
 mod chain;
 mod config;
 mod contracts;
 mod patricia_merkle_trie;
 mod validators;
+mod wallets;
 
 use chain::Chain;
 use config::{config_utils, static_config};
 use patricia_merkle_trie::state_root;
-use primitives::{block::Block, transaction::*};
+use primitives::*;
 use std::collections::HashMap;
 use validators::TwoEpochValidators;
-use wallets::{PendingUnstake, Wallet, Wallets};
+use wallets::Wallets;
 
 #[derive(Debug)]
 pub struct Blockchain {

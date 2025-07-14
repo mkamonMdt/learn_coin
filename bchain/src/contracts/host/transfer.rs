@@ -1,5 +1,5 @@
+use crate::primitives::Wallet;
 use crate::Blockchain;
-use crate::Wallet;
 use wasmi::{Caller, Extern};
 
 pub fn transfer(

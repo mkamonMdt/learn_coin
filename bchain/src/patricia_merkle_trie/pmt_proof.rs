@@ -1,5 +1,5 @@
 use crate::patricia_merkle_trie::state_root;
-use crate::primitives::block::Block;
+use crate::primitives::Block;
 use crate::wallets::Wallets;
 
 use sha2::{Digest, Sha256};
