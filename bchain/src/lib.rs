@@ -5,6 +5,7 @@ pub mod wallets;
 
 mod chain;
 mod config;
+mod contracts;
 mod patricia_merkle_trie;
 mod validators;
 
@@ -15,7 +16,6 @@ use primitives::{block::Block, transaction::*};
 use std::collections::HashMap;
 use validators::TwoEpochValidators;
 use wallets::{PendingUnstake, Wallet, Wallets};
-use wasmi::{Caller, Engine, Extern, Func, Linker, Module, Store};
 
 #[derive(Debug)]
 pub struct Blockchain {
@@ -115,73 +115,6 @@ impl Blockchain {
         Self::return_stakes(&mut self.wallets, epoch);
     }
 
-    fn execute_contract(
-        &mut self,
-        code: &[u8],
-        contract_address: &str,
-        sender: &str,
-    ) -> Result<(), String> {
-        // Initialize the Wasm engine and store
-        let engine = Engine::default();
-        let module = Module::new(&engine, code)
-            .map_err(|e| format!("Failed to laod Wasm module: {:?}", e))?;
-        let mut store: Store<(String, String)> =
-            Store::new(&engine, (contract_address.to_string(), sender.to_string()));
-
-        // Create a linker and define host functions
-        let mut linker: Linker<(String, String)> = Linker::new(&engine);
-
-        let get_balance = Func::wrap(&mut store, get_balance_host);
-        linker.define("env", "get_balance", get_balance).unwrap();
-
-        let transfer = Func::wrap(&mut store, transfer_host);
-        linker.define("env", "transfer", transfer).unwrap();
-
-        let store_func = Func::wrap(&mut store, store_host);
-        linker.define("env", "store", store_func).unwrap();
-
-        let load_func = Func::wrap(&mut store, load_host);
-        linker.define("env", "load", load_func).unwrap();
-
-        let stake_func = Func::wrap(&mut store, stake_host);
-        linker.define("env", "stake", stake_func).unwrap();
-
-        let unstake_func = Func::wrap(&mut store, unstake_host);
-        linker.define("env", "unstake", unstake_func).unwrap();
-
-        let debug_func = Func::wrap(&mut store, debug_host);
-        linker.define("env", "debug", debug_func).unwrap();
-
-        // Instantiate the module
-        let instance = linker
-            .instantiate(&mut store, &module)
-            .map_err(|e| format!("Failed to instantiate module: {:?}", e))?
-            .start(&mut store)
-            .map_err(|e| format!("Failed to start instance: {:?}", e))?;
-
-        // Call the execute function, passing the blockchain pointer
-        // Split the pointer into two i32s
-        let blockchain_ptr = self as *mut Blockchain as usize; // Use usize to hold the full pointer
-        let blockchain_ptr_low = (blockchain_ptr & 0xFFFFFFFF) as i32; // Lower 32 bits
-        let blockchain_ptr_high = ((blockchain_ptr >> 32) & 0xFFFFFFFF) as i32; // Upper 32 bits
-
-        let execute = instance
-            .get_export(&store, "execute")
-            .and_then(Extern::into_func)
-            .ok_or("Failed to find execute function")?;
-        let execute: Func = execute;
-        execute
-            .call(
-                &mut store,
-                &[
-                    wasmi::Val::I32(blockchain_ptr_low), // Pass blockchain_ptr as an argument
-                    wasmi::Val::I32(blockchain_ptr_high),
-                ],
-                &mut [wasmi::Val::I32(0)],
-            )
-            .map_err(|e| format!("Failed to execute contract: {:?}", e))
-    }
-
     fn process_block(&mut self, block: Block) -> Result<(), String> {
         self.on_first_block_of_epoch();
         if block.hash != block.calculate_hash() {
@@ -278,7 +211,7 @@ impl Blockchain {
                         .get(contract_address)
                         .ok_or("Contract not found")?
                         .clone();
-                    self.execute_contract(x, contract_address, &tx.sender)?;
+                    contracts::execute(self, x, contract_address, &tx.sender)?;
                 }
             }
         }
@@ -314,244 +247,6 @@ impl Default for Blockchain {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn store_host(
-    caller: Caller<(String, String)>,
-    blockchain_ptr_low: i32,
-    blockchain_ptr_high: i32,
-    key_ptr: i32,
-    key_len: i32,
-    value_ptr: i32,
-    value_len: i32,
-) -> i32 {
-    let blockchain_ptr = ((blockchain_ptr_high as u64) << 32) | (blockchain_ptr_low as u32 as u64);
-    if blockchain_ptr == 0 {
-        println!("Error: blockchain_ptr is null");
-        return 1;
-    }
-    let blockchain: &mut Blockchain = unsafe { &mut *(blockchain_ptr as *mut Blockchain) };
-
-    let memory = match caller.get_export("memory").and_then(Extern::into_memory) {
-        Some(mem) => mem,
-        None => return 1,
-    };
-
-    let key_bytes = &memory.data(&caller)[key_ptr as usize..(key_ptr + key_len) as usize];
-    let key = match String::from_utf8(key_bytes.to_vec()) {
-        Ok(s) => s,
-        Err(_) => return 1,
-    };
-
-    let value_bytes = &memory.data(&caller)[value_ptr as usize..(value_ptr + value_len) as usize];
-    let value = value_bytes.to_vec();
-
-    let contract_address = caller.data().0.clone();
-    let storage = blockchain
-        .contract_storage
-        .entry(contract_address)
-        .or_default();
-    storage.insert(key, value);
-    0 // Success
-}
-
-fn load_host(
-    mut caller: Caller<(String, String)>,
-    blockchain_ptr_low: i32,
-    blockchain_ptr_high: i32,
-    key_ptr: i32,
-    key_len: i32,
-    value_ptr: i32, // New parameter: where to write the value
-) -> i32 {
-    let blockchain_ptr = ((blockchain_ptr_high as u64) << 32) | (blockchain_ptr_low as u32 as u64);
-    if blockchain_ptr == 0 {
-        println!("Error: blockchain_ptr is null");
-        return -1;
-    }
-    let blockchain: &mut Blockchain = unsafe { &mut *(blockchain_ptr as *mut Blockchain) };
-    let memory = match caller.get_export("memory").and_then(Extern::into_memory) {
-        Some(mem) => mem,
-        None => return -1,
-    };
-
-    // Read the key
-    let key_bytes = &memory.data(&caller)[key_ptr as usize..(key_ptr + key_len) as usize];
-    let key = match String::from_utf8(key_bytes.to_vec()) {
-        Ok(s) => s,
-        Err(_) => return -1,
-    };
-
-    // Get the contract address from the caller data
-    let contract_address = caller.data().0.clone();
-
-    // Look up the value
-    let storage = blockchain.contract_storage.get(&contract_address);
-    let value = match storage.and_then(|s| s.get(&key)) {
-        Some(v) => v,
-        None => return -1, // Key not found
-    };
-
-    // Write the value to the specified location
-    if (value_ptr as usize) + value.len() > memory.data(&caller).len() {
-        return -1; // Not enough space in memory
-    }
-    memory.data_mut(&mut caller)[value_ptr as usize..(value_ptr as usize) + value.len()]
-        .copy_from_slice(value);
-    value.len() as i32 // Return the length of the value
-}
-
-fn stake_host(
-    caller: Caller<(String, String)>,
-    blockchain_ptr_low: i32,
-    blockchain_ptr_high: i32,
-    amount: f64,
-) -> i32 {
-    let blockchain_ptr = ((blockchain_ptr_high as u64) << 32) | (blockchain_ptr_low as u32 as u64);
-    if blockchain_ptr == 0 {
-        println!("Error: blockchain_ptr is null");
-        return 1;
-    }
-    let blockchain: &mut Blockchain = unsafe { &mut *(blockchain_ptr as *mut Blockchain) };
-    let user = caller.data().1.clone();
-    let wallet = match blockchain.wallets.wallets.get_mut(&user) {
-        Some(wallet) => wallet,
-        None => {
-            println!("Error: User {} not found", user);
-            return 1;
-        }
-    };
-    if wallet.balance < amount {
-        return 1;
-    }
-    wallet.balance -= amount;
-    wallet.staked += amount;
-    0
-}
-
-fn unstake_host(
-    caller: Caller<(String, String)>,
-    blockchain_ptr_low: i32,
-    blockchain_ptr_high: i32,
-    amount: f64,
-) -> i32 {
-    let blockchain_ptr = ((blockchain_ptr_high as u64) << 32) | (blockchain_ptr_low as u32 as u64);
-    if blockchain_ptr == 0 {
-        println!("Error: blockchain_ptr is null");
-        return 1;
-    }
-    let blockchain: &mut Blockchain = unsafe { &mut *(blockchain_ptr as *mut Blockchain) };
-    let block_height = blockchain.chain.len();
-    let effective_epoch = config_utils::get_epoch(block_height) + 2;
-    //let contract_address = caller.data().clone();
-    let user = caller.data().1.clone();
-    let wallet = match blockchain.wallets.wallets.get_mut(&user) {
-        Some(wallet) => wallet,
-        None => {
-            println!("Error: User {} not found", user);
-            return 1;
-        }
-    };
-    if wallet.staked < amount {
-        return 1;
-    }
-    wallet.staked -= amount;
-
-    wallet.pending_unstakes.push_back(PendingUnstake {
-        amount,
-        effective_epoch,
-    });
-    0
-}
-
-// Host function: get_balance
-fn get_balance_host(
-    caller: Caller<(String, String)>,
-    blockchain_ptr_low: i32,
-    blockchain_ptr_high: i32,
-    user_ptr: i32,
-    user_len: i32,
-) -> f64 {
-    let blockchain_ptr = ((blockchain_ptr_high as u64) << 32) | (blockchain_ptr_low as u32 as u64);
-    let blockchain: &mut Blockchain = unsafe { &mut *(blockchain_ptr as *mut Blockchain) };
-
-    let memory = match caller.get_export("memory").and_then(Extern::into_memory) {
-        Some(mem) => mem,
-        None => return 0.0,
-    };
-    let user_bytes =
-        memory.data(&caller)[user_ptr as usize..(user_ptr + user_len) as usize].to_vec();
-    let user = match String::from_utf8(user_bytes) {
-        Ok(u) => u,
-        Err(_) => return 0.0,
-    };
-    blockchain
-        .wallets
-        .wallets
-        .get(&user)
-        .map(|w| w.balance)
-        .unwrap_or(0.0)
-}
-
-// Host function: get_balance
-fn transfer_host(
-    caller: Caller<(String, String)>,
-    blockchain_ptr_low: i32,
-    blockchain_ptr_high: i32,
-    from_ptr: i32,
-    from_len: i32,
-    to_ptr: i32,
-    to_len: i32,
-    amount: f64,
-) -> i32 {
-    let blockchain_ptr = ((blockchain_ptr_high as u64) << 32) | (blockchain_ptr_low as u32 as u64);
-    let blockchain: &mut Blockchain = unsafe { &mut *(blockchain_ptr as *mut Blockchain) };
-    let memory = caller
-        .get_export("memory")
-        .and_then(Extern::into_memory)
-        .ok_or("Failed to get memory")
-        .unwrap();
-    let from_bytes =
-        memory.data(&caller)[from_ptr as usize..(from_ptr + from_len) as usize].to_vec();
-    let to_bytes = memory.data(&caller)[to_ptr as usize..(to_ptr + to_len) as usize].to_vec();
-    let from = String::from_utf8(from_bytes).unwrap();
-    let to = String::from_utf8(to_bytes).unwrap();
-
-    if amount <= 0.0 {
-        return 1; //Failure
-    }
-    let from_wallet = match blockchain.wallets.wallets.get_mut(&from) {
-        Some(wallet) => wallet,
-        None => return 1,
-    };
-    from_wallet.balance -= amount;
-    let to_wallet = blockchain
-        .wallets
-        .wallets
-        .entry(to.clone())
-        .or_insert(Wallet::new(0.));
-    to_wallet.balance += amount;
-    0 // Success
-}
-
-fn debug_host(caller: Caller<(String, String)>, msg_ptr: i32, msg_len: i32, value: u32) {
-    let memory = match caller.get_export("memory").and_then(Extern::into_memory) {
-        Some(mem) => mem,
-        None => {
-            println!("Debug error: No memory export found");
-            return;
-        }
-    };
-
-    let msg_bytes = &memory.data(&caller)[msg_ptr as usize..(msg_ptr + msg_len) as usize];
-    let msg = match String::from_utf8(msg_bytes.to_vec()) {
-        Ok(s) => s,
-        Err(_) => {
-            println!("Debug error: Invalid UTF-8 string");
-            return;
-        }
-    };
-
-    println!("Contract debug: {} {}", msg, value);
 }
 
 #[cfg(test)]
