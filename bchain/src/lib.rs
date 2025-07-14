@@ -18,11 +18,6 @@ use wallets::{PendingUnstake, Wallet, Wallets};
 use wasmi::{Caller, Engine, Extern, Func, Linker, Module, Store};
 
 #[derive(Debug)]
-struct ContractState {
-    storage: HashMap<String, f64>,
-}
-
-#[derive(Debug)]
 pub struct Blockchain {
     chain: Chain,
     pub wallets: Wallets,
@@ -693,8 +688,6 @@ mod tests {
 
     #[test]
     fn test_validator_consensus_block() {
-        let blockchain = Blockchain::new();
-
         assert_eq!(config_utils::get_validators_consensus_block(0), 0);
         assert_eq!(config_utils::get_validators_consensus_block(1), 0);
         assert_eq!(

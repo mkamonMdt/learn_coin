@@ -24,15 +24,7 @@ impl Wallet {
     }
 }
 
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct Wallets {
     pub wallets: HashMap<String, Wallet>,
-}
-
-impl Default for Wallets {
-    fn default() -> Self {
-        Self {
-            wallets: HashMap::new(),
-        }
-    }
 }
