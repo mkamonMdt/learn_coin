@@ -1,5 +1,8 @@
 # TODO list (Found at|Done at| Description)
 
+- [ ] [5dd147b](https://github.com/mkamonMdt/learn_coin/commit/5dd147ba85d703739c75d92bda12171b72e8cdd4)|| Move Wallets state managing logic to wallets module. 
+- [ ] [5dd147b](https://github.com/mkamonMdt/learn_coin/commit/5dd147ba85d703739c75d92bda12171b72e8cdd4)|| Need Wallets logic that allows to "reserve&collect" fees until operation (especially in other than-wallet related transaction types) is concluded. It is not trivial as Transaction fees should be collected only for valid transaction but rules for failure in executing a contract probably needs a fee collection nevertheless.
+- [ ] [5dd147b](https://github.com/mkamonMdt/learn_coin/commit/5dd147ba85d703739c75d92bda12171b72e8cdd4)|| Blochchain has public member Wallets used in pseudo "integration" tests with contracts in main crate. In general we need to explcitly extend the interface with a trait that allows to get single Wallet by user ID. 
 - [ ] [8dd99c7](https://github.com/mkamonMdt/learn_coin/commit/8dd99c7e88a1932122b8ab85156fb19fa56e5586)|| stake_pool is explict String-key HashMap
 - [ ] [8dd99c7](https://github.com/mkamonMdt/learn_coin/commit/8dd99c7e88a1932122b8ab85156fb19fa56e5586)|| Validators for given epoch are kept as Vec<String> althugh the
 length of the container cannot be changed (at the moment) 
