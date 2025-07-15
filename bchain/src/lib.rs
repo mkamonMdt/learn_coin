@@ -24,7 +24,6 @@ pub struct Blockchain {
     contracts: HashMap<String, Vec<u8>>,
     contract_storage: HashMap<String, HashMap<String, Vec<u8>>>,
     validators: TwoEpochValidators,
-    total_staked: f64,
 }
 
 impl Blockchain {
@@ -40,7 +39,6 @@ impl Blockchain {
             contracts: HashMap::new(),
             contract_storage: HashMap::new(),
             validators: TwoEpochValidators::new(static_config::EPOCH_HEIGHT),
-            total_staked: 0.0,
         }
     }
 
@@ -86,14 +84,9 @@ impl Blockchain {
     }
 
     fn distribute_rewards(&mut self) {
-        if self.total_staked == 0.0 {
-            return;
-        }
-
-        let total_reward = self.total_staked * static_config::REWARD_RATE_PER_EPOCH;
         for user in self.validators.get_current_epoch_validators() {
             let wallet = self.wallets.wallets.get_mut(user).unwrap();
-            let user_reward = (wallet.staked / self.total_staked) * total_reward;
+            let user_reward = wallet.staked * static_config::REWARD_RATE_PER_EPOCH;
             wallet.balance += user_reward;
         }
     }
@@ -110,7 +103,6 @@ impl Blockchain {
         let seed = self.get_epoch_seed(next_epoch);
         self.distribute_rewards();
         let stake_pool = Self::get_stake_pool(&self.wallets);
-        self.total_staked = stake_pool.values().sum();
         self.validators.update_validators(&stake_pool, seed);
         Self::return_stakes(&mut self.wallets, epoch);
     }
