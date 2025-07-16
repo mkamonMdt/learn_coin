@@ -61,28 +61,6 @@ impl Blockchain {
         }
     }
 
-    fn return_stakes(wallets: &mut Wallets, epoch: usize) {
-        for wallet in wallets.wallets.values_mut() {
-            while let Some(pending) = wallet.pending_unstakes.front() {
-                if pending.effective_epoch <= epoch {
-                    wallet.balance += wallet.pending_unstakes.pop_front().unwrap().amount;
-                } else {
-                    break;
-                }
-            }
-        }
-    }
-
-    fn get_stake_pool(wallets: &Wallets) -> HashMap<String, f64> {
-        let mut stake_pool = HashMap::new();
-        for (user, wallet) in &wallets.wallets {
-            if wallet.staked > 0.0 {
-                stake_pool.insert(user.clone(), wallet.staked);
-            }
-        }
-        stake_pool
-    }
-
     fn distribute_rewards(&mut self) {
         for user in self.validators.get_current_epoch_validators() {
             let wallet = self.wallets.wallets.get_mut(user).unwrap();
@@ -102,9 +80,9 @@ impl Blockchain {
         let next_epoch = epoch + 1;
         let seed = self.get_epoch_seed(next_epoch);
         self.distribute_rewards();
-        let stake_pool = Self::get_stake_pool(&self.wallets);
+        let stake_pool = self.wallets.get_stake_pool();
         self.validators.update_validators(&stake_pool, seed);
-        Self::return_stakes(&mut self.wallets, epoch);
+        self.wallets.return_stakes(epoch);
     }
 
     fn process_block(&mut self, block: Block) -> Result<(), String> {
@@ -137,49 +115,17 @@ impl Blockchain {
         for tx in &transactions {
             match &tx.tx_type {
                 TransactionType::Stake { user, amount } => {
-                    let wallet = self.wallets.wallets.get_mut(user).ok_or("User not found")?;
-                    if wallet.balance < *amount + tx.fee {
-                        return Err("Insufficient ballance to stake".to_string());
-                    }
-                    wallet.balance -= *amount + tx.fee;
-                    wallet.staked += *amount;
+                    self.wallets.stake(user, *amount, tx.fee)?;
                 }
                 TransactionType::Unstake { user, amount } => {
-                    let unstake_epoch = config_utils::get_epoch(block_height) + 2;
-                    let wallet = self.wallets.wallets.get_mut(user).ok_or("User not found")?;
-                    if wallet.staked < *amount {
-                        return Err("Insufficient stake to unstake".to_string());
-                    }
-                    if wallet.balance < tx.fee {
-                        return Err(format!("Insufficient  balance for fee: {}", user));
-                    }
-                    wallet.balance -= tx.fee;
-                    wallet.staked -= *amount;
-                    wallet.pending_unstakes.push_back(PendingUnstake {
-                        amount: *amount,
-                        effective_epoch: unstake_epoch,
-                    });
+                    self.wallets.unstake(user, block_height, *amount, tx.fee)?;
                 }
                 TransactionType::Transfer {
                     sender,
                     receiver,
                     amount,
                 } => {
-                    let sender_wallet = self
-                        .wallets
-                        .wallets
-                        .get_mut(sender)
-                        .ok_or("Sender not found")?;
-                    if sender_wallet.balance < *amount + tx.fee {
-                        return Err("Insufficient balance".to_string());
-                    }
-                    sender_wallet.balance -= *amount + tx.fee;
-                    let receiver_wallet = self
-                        .wallets
-                        .wallets
-                        .entry(receiver.clone())
-                        .or_insert(Wallet::new(0.));
-                    receiver_wallet.balance += *amount;
+                    self.wallets.transfer(sender, receiver, *amount, tx.fee)?;
                 }
                 TransactionType::DeployContract { code } => {
                     let contract_address = format!("contract_{}", self.contracts.len());
