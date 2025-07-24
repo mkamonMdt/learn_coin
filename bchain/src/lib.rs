@@ -9,21 +9,49 @@ mod patricia_merkle_trie;
 mod validators;
 mod wallets;
 
+use bchain_error::BChainError;
 use chain::Chain;
 use config::{config_utils, static_config};
+use message::BlockchainFacade;
 use patricia_merkle_trie::state_root;
 use primitives::*;
 use std::collections::HashMap;
 use validators::TwoEpochValidators;
 use wallets::Wallets;
 
+pub use config::static_config::GENESIS;
+
 #[derive(Debug)]
 pub struct Blockchain {
     chain: Chain,
-    pub wallets: Wallets,
+    wallets: Wallets,
     contracts: HashMap<String, Vec<u8>>,
     contract_storage: HashMap<String, HashMap<String, Vec<u8>>>,
     validators: TwoEpochValidators,
+}
+
+impl BlockchainFacade for Blockchain {
+    fn receive(&mut self, msg: message::Message) -> Result<(), BChainError> {
+        match msg.msg_type {
+            message::MessageType::ProduceBlock(producer, transactions) => {
+                self.add_block(transactions).map_err(|msg| -> BChainError {
+                    BChainError::BlockProductionFailure(producer, msg)
+                })?
+            }
+            message::MessageType::IncommingBlock(_block) => todo!(),
+            message::MessageType::GetHeaders => todo!(),
+            message::MessageType::Headers(_blocks) => todo!(),
+        }
+
+        Ok(())
+    }
+
+    fn get_wallet(&self, user: &str) -> Result<&Wallet, BChainError> {
+        self.wallets
+            .wallets
+            .get(user)
+            .ok_or(BChainError::UserNotFound(user.to_string()))
+    }
 }
 
 impl Blockchain {
@@ -101,7 +129,7 @@ impl Blockchain {
         self.add_block(block.transactions)
     }
 
-    pub fn add_block(&mut self, transactions: Vec<Transaction>) -> Result<(), String> {
+    fn add_block(&mut self, transactions: Vec<Transaction>) -> Result<(), String> {
         let block_height = self.chain.len();
         let slot_in_epoch = block_height % static_config::EPOCH_HEIGHT;
         let validator = self

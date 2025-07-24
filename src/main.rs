@@ -5,18 +5,37 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use bchain::{
+        message::BlockchainFacade,
         primitives::{Transaction, TransactionType, Wallet},
-        Blockchain,
+        Blockchain, GENESIS,
     };
+
+    fn produce_block_with_single_tx<T: BlockchainFacade>(blockchain: &mut T, tx: Transaction) {
+        let res = blockchain.receive(bchain::message::Message {
+            msg_type: bchain::message::MessageType::ProduceBlock(GENESIS.to_owned(), vec![tx]),
+        });
+
+        assert!(res.is_ok());
+    }
+
+    fn insert_wallet<T: BlockchainFacade>(blockchain: &mut T, user: &str, amount: f64) {
+        let tx = Transaction::new(
+            GENESIS.to_owned(),
+            TransactionType::Transfer {
+                sender: GENESIS.to_owned(),
+                receiver: user.to_owned(),
+                amount,
+            },
+            0.,
+        );
+        produce_block_with_single_tx(blockchain, tx);
+    }
 
     #[test]
     fn test_wasm_simple_contract() {
         let mut blockchain = Blockchain::new();
 
-        blockchain
-            .wallets
-            .wallets
-            .insert("Alice".to_string(), Wallet::new(500.0));
+        insert_wallet(&mut blockchain, "Alice", 500.0);
 
         // Load the Wasm contract bytecode, that is very un-unittest like :D
         let wasm_bytes =
@@ -28,7 +47,7 @@ mod tests {
             TransactionType::DeployContract { code: wasm_bytes },
             1.0,
         );
-        assert!(blockchain.add_block(vec![tx1]).is_ok());
+        produce_block_with_single_tx(&mut blockchain, tx1);
 
         // Call the contract
         let tx2 = Transaction::new(
@@ -38,17 +57,14 @@ mod tests {
             },
             1.0,
         );
-        assert!(blockchain.add_block(vec![tx2]).is_ok());
+        produce_block_with_single_tx(&mut blockchain, tx2);
     }
 
     #[test]
     fn test_contract_execution() {
         let mut blockchain = Blockchain::new();
 
-        blockchain
-            .wallets
-            .wallets
-            .insert("Alice".to_string(), Wallet::new(500.0));
+        insert_wallet(&mut blockchain, "Alice", 500.0);
 
         let wasm_bytes =
             std::fs::read("target/wasm32-unknown-unknown/release/counter_contract.wasm").unwrap();
@@ -58,7 +74,7 @@ mod tests {
             TransactionType::DeployContract { code: wasm_bytes },
             1.0,
         );
-        blockchain.add_block(vec![tx1]).unwrap();
+        produce_block_with_single_tx(&mut blockchain, tx1);
 
         // Call the contract multiple times to increment the counter
         for i in 1..=5 {
@@ -69,13 +85,18 @@ mod tests {
                 },
                 1.0,
             );
-            blockchain.add_block(vec![tx]).unwrap();
-            println!("After block {}: {:#?}", i, blockchain.wallets);
+            produce_block_with_single_tx(&mut blockchain, tx);
+            println!(
+                "After block {}:\nAlice={:#?}\nBob={:#?}",
+                i,
+                blockchain.get_wallet("Alice"),
+                blockchain.get_wallet("Bob")
+            );
         }
 
         // Verify the results
-        let alice_wallet = blockchain.wallets.wallets.get("Alice").unwrap();
-        let bob_wallet = blockchain.wallets.wallets.get("Bob").unwrap();
+        let alice_wallet = blockchain.get_wallet("Alice").unwrap();
+        let bob_wallet = blockchain.get_wallet("Bob").unwrap();
 
         // After 5 calls:
         // - Counter should be 5
