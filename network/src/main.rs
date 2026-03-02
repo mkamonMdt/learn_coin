@@ -1,8 +1,5 @@
 use clap::Parser;
 
-mod comm;
-mod node;
-
 #[derive(Parser, Debug)]
 struct Args {
     #[arg(long, default_value = "40001")]

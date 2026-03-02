@@ -4,15 +4,24 @@ use uuid::Uuid;
 
 use crate::comm::events::NodeEvent;
 use crate::comm::net_message::NetworkMessage;
+use crate::NetworkError;
 
-pub async fn connect_to_peer(addr: String, node_tx: mpsc::Sender<NodeEvent>) {
+pub struct Peer {
+    pub addr: String,
+}
+
+pub async fn connect_to_peer(
+    addr: String,
+    node_tx: mpsc::Sender<NodeEvent>,
+) -> Result<(), NetworkError> {
     match TcpStream::connect(addr).await {
         Ok(stream) => {
             tokio::spawn(crate::node::peer::handle_peer(stream, node_tx));
+            Ok(())
         }
-        Err(e) => {
-            println!("Failed to connect: {:?}", e);
-        }
+        Err(e) => Err(NetworkError::PeerFailure(
+            format!("Failed to connect: {:?}", e).to_string(),
+        )),
     }
 }
 

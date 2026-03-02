@@ -2,10 +2,15 @@ pub mod listener;
 pub mod peer;
 
 use crate::comm::events::NodeEvent;
+use crate::node::peer::Peer;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::Mutex;
 use tokio::sync::mpsc;
 
 pub struct Node {
     sender: mpsc::Sender<NodeEvent>,
+    peers: Arc<Mutex<HashMap<String, Peer>>>,
 }
 
 impl Node {
@@ -20,12 +25,24 @@ impl Node {
         ));
         println!("Node running on {}", listen_addr);
 
-        Self { sender: tx }
+        Self {
+            sender: tx,
+            peers: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     pub async fn bootstrap(&self, peer_addr: String) {
         println!("Connecting to {}", peer_addr);
-        peer::connect_to_peer(peer_addr, self.sender.clone()).await;
+        match peer::connect_to_peer(peer_addr.clone(), self.sender.clone()).await {
+            Ok(_) => {
+                let mut peers = self
+                    .peers
+                    .lock()
+                    .expect("Unrecoverable failure: peers mutext poisoned");
+                peers.insert(peer_addr.clone(), Peer { addr: peer_addr });
+            }
+            Err(e) => println!("Network error: {:#?}", e),
+        }
     }
 
     async fn start_node(mut rx: mpsc::Receiver<NodeEvent>) {
