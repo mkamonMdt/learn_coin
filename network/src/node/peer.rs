@@ -1,13 +1,13 @@
+use crate::comm::events::NodeEvent;
+use crate::comm::net_message::NetworkMessage;
+use crate::protocols::peer_handshake;
+use crate::NetworkError;
+use serde::{Deserialize, Serialize};
 use std::io;
 use tokio::{io::AsyncReadExt, net::TcpStream, sync::mpsc};
 use uuid::Uuid;
 
-use crate::comm::events::NodeEvent;
-use crate::comm::net_message::NetworkMessage;
-use crate::protocols::peer_handshake::run_protocol;
-use crate::NetworkError;
-
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Peer {
     pub addr: String,
     pub id: Uuid,
@@ -28,10 +28,20 @@ impl Peer {
 pub async fn connect_to_peer(
     addr: String,
     node_tx: mpsc::Sender<NodeEvent>,
+    local_peer: Peer,
 ) -> Result<(), NetworkError> {
     match TcpStream::connect(addr).await {
         Ok(stream) => {
-            tokio::spawn(crate::node::peer::handle_peer(stream, node_tx));
+            tokio::spawn({
+                // NOTE: It will not work yet, there is no proper send/receive
+                // data from TcpStream implemented. We need to create TcpStream blindly
+                // and based on Handshake protocol result create new peer or
+                // close the stream.
+                let peer = peer_handshake::initiate_protocol(local_peer, node_tx.clone())
+                    .await
+                    .unwrap();
+                crate::node::peer::handle_peer(stream, node_tx, peer)
+            });
             Ok(())
         }
         Err(e) => Err(NetworkError::PeerFailure(
@@ -40,9 +50,11 @@ pub async fn connect_to_peer(
     }
 }
 
-pub async fn handle_peer(stream: TcpStream, node_tx: mpsc::Sender<NodeEvent>) -> io::Result<()> {
-    let (mut stream, peer) = run_protocol(stream, node_tx.clone()).await.unwrap();
-
+pub async fn handle_peer(
+    mut stream: TcpStream,
+    node_tx: mpsc::Sender<NodeEvent>,
+    peer: Peer,
+) -> io::Result<()> {
     node_tx
         .send(NodeEvent::PeerConnected(peer.clone()))
         .await

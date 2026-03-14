@@ -1,32 +1,61 @@
 use crate::comm::events::NodeEvent;
 use crate::node::peer::Peer;
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::net::TcpStream;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 
-/// TODO: The function should handle entire handshake protocol
-pub async fn run_protocol(
-    _stream: TcpStream,
-    _event_handler: mpsc::Sender<NodeEvent>,
-) -> Result<(TcpStream, Peer), ()> {
+pub async fn initiate_protocol(
+    local_peer: Peer,
+    event_handler: mpsc::Sender<NodeEvent>,
+) -> Result<Peer, ()> {
+    let local_iv = generate_rand_iv();
+    let msg = PeerHandshake::new(local_peer.clone(), local_iv);
+    let (tx, rx) = oneshot::channel();
+    let _ = event_handler.send(NodeEvent::PeerHandshake(msg, tx)).await;
+
+    let (remote_peer, remote_iv) = match rx.await.unwrap() {
+        PeerHandshake::Response(proof) => {
+            if !proof.verify_incomming(&local_peer, local_iv) {
+                return Err(());
+            }
+            (proof.sender, proof.sender_iv)
+        }
+        _ => {
+            return Err(());
+        }
+    };
+
+    let req = ProofOfPossessionRequest {
+        iv: remote_iv,
+        peer: remote_peer.clone(),
+    };
+    let msg = PeerHandshake::from_request(req, local_peer, local_iv);
+    let (tx, _rx) = oneshot::channel();
+    let _ = event_handler.send(NodeEvent::PeerHandshake(msg, tx)).await;
+
+    Ok(remote_peer)
+}
+
+pub async fn accept_protocol(_event_handler: mpsc::Sender<NodeEvent>) -> Result<Peer, ()> {
     todo!()
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum PeerHandshake {
     Request(ProofOfPossessionRequest),
     Response(ProofOfPossessionResponse),
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ProofOfPossessionRequest {
     /// TODO: should be a type, preferebly an enum to update versions
     iv: [u8; 8],
     peer: Peer,
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ProofOfPossessionResponse {
     sender: Peer,
     receiver: Peer,
@@ -38,24 +67,25 @@ pub struct ProofOfPossessionResponse {
 
 impl PeerHandshake {
     /// TODO: there should be also some local signer here
-    fn from_request(req: ProofOfPossessionRequest, local_peer: Peer) -> Self {
-        let local_iv = generate_rand_iv();
-        let signature = sign(&req, &local_peer, local_iv);
+    fn from_request(req: ProofOfPossessionRequest, local_peer: Peer, local_iv: [u8; 8]) -> Self {
+        let mut hasher = Sha256::new();
+
+        hasher.update(req.peer.to_bytes());
+        hasher.update(req.iv);
+        hasher.update(local_peer.to_bytes());
+        hasher.update(local_iv);
 
         Self::Response(ProofOfPossessionResponse {
             sender: local_peer,
             receiver: req.peer,
             sender_iv: local_iv,
             receiver_iv: req.iv,
-            signature,
+            signature: hasher.finalize().into(),
         })
     }
 
-    fn new(local_peer: Peer) -> Self {
-        Self::Request(ProofOfPossessionRequest {
-            iv: generate_rand_iv(),
-            peer: local_peer,
-        })
+    fn new(peer: Peer, iv: [u8; 8]) -> Self {
+        Self::Request(ProofOfPossessionRequest { iv, peer })
     }
 }
 
@@ -80,14 +110,4 @@ fn generate_rand_iv() -> [u8; 8] {
     let mut bytes = [0u8; 8];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     bytes
-}
-
-fn sign(req: &ProofOfPossessionRequest, local_peer: &Peer, local_iv: [u8; 8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-
-    hasher.update(req.peer.to_bytes());
-    hasher.update(req.iv);
-    hasher.update(local_peer.to_bytes());
-    hasher.update(local_iv);
-    hasher.finalize().into()
 }

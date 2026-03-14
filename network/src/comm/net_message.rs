@@ -1,15 +1,15 @@
 use serde::{Deserialize, Serialize};
-// use tokio::io::AsyncWriteExt;
-// use tokio::net::TcpStream;
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpStream;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+use crate::protocols::peer_handshake::PeerHandshake;
+
+#[derive(Serialize, Deserialize, Debug)]
 pub enum NetworkMessage {
-    Ping,
-    Pong,
+    Handshake(PeerHandshake),
 }
 
-/*
-pub async fn send_message(&mut stream: TcpStream, msg: &NetworkMessage) -> std::io::Result<()> {
+pub async fn send_message(stream: &mut TcpStream, msg: &NetworkMessage) -> std::io::Result<()> {
     let bytes = bincode::serialize(msg).unwrap();
     let len = bytes.len() as u32;
 
@@ -17,4 +17,3 @@ pub async fn send_message(&mut stream: TcpStream, msg: &NetworkMessage) -> std::
     stream.write_all(&bytes).await?;
     Ok(())
 }
-*/

@@ -7,16 +7,22 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 type Peers = Arc<Mutex<HashMap<String, Peer>>>;
 
 pub struct Node {
     sender: mpsc::Sender<NodeEvent>,
     peers: Peers,
+    local_peer: Peer,
 }
 
 impl Node {
     pub async fn new(listen_addr: String) -> Self {
+        let local_peer = Peer {
+            addr: listen_addr.clone(),
+            id: Uuid::new_v4(),
+        };
         let (tx, rx) = mpsc::channel::<NodeEvent>(30);
         println!("Node starting on {}", listen_addr);
 
@@ -31,12 +37,22 @@ impl Node {
         ));
         println!("Node running on {}", listen_addr);
 
-        Self { sender: tx, peers }
+        Self {
+            sender: tx,
+            peers,
+            local_peer,
+        }
     }
 
     pub async fn bootstrap(&self, peer_addr: String) {
         println!("Connecting to {}", peer_addr);
-        match peer::connect_to_peer(peer_addr.clone(), self.sender.clone()).await {
+        match peer::connect_to_peer(
+            peer_addr.clone(),
+            self.sender.clone(),
+            self.local_peer.clone(),
+        )
+        .await
+        {
             Ok(()) => {}
             Err(e) => println!("Network error: {:#?}", e),
         }
