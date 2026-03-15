@@ -1,4 +1,5 @@
 use crate::comm::events::NodeEvent;
+use crate::comm::events::PeerConnectionEvent;
 use crate::node::peer::Peer;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,11 @@ pub async fn initiate_protocol(
     let local_iv = generate_rand_iv();
     let msg = PeerHandshake::new(local_peer.clone(), local_iv);
     let (tx, rx) = oneshot::channel();
-    let _ = event_handler.send(NodeEvent::PeerHandshake(msg, tx)).await;
+    let _ = event_handler
+        .send(NodeEvent::PeerConnection(
+            PeerConnectionEvent::PeerHandshake(msg, tx),
+        ))
+        .await;
 
     let (remote_peer, remote_iv) = match rx.await.unwrap() {
         PeerHandshake::Response(proof) => {
@@ -33,7 +38,11 @@ pub async fn initiate_protocol(
     };
     let msg = PeerHandshake::from_request(req, local_peer, local_iv);
     let (tx, _rx) = oneshot::channel();
-    let _ = event_handler.send(NodeEvent::PeerHandshake(msg, tx)).await;
+    let _ = event_handler
+        .send(NodeEvent::PeerConnection(
+            PeerConnectionEvent::PeerHandshake(msg, tx),
+        ))
+        .await;
 
     Ok(remote_peer)
 }

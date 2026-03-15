@@ -1,7 +1,9 @@
+pub mod connection;
 pub mod listener;
 pub mod peer;
 
 use crate::comm::events::NodeEvent;
+use crate::comm::events::PeerConnectionEvent;
 use crate::node::peer::Peer;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -61,20 +63,27 @@ impl Node {
     async fn start_node(peers: Peers, mut rx: mpsc::Receiver<NodeEvent>) {
         while let Some(event) = rx.recv().await {
             match event {
-                NodeEvent::PeerConnected(peer) => {
-                    println!("Peer connected: {:?}", peer);
-                    let mut peers = peers
-                        .lock()
-                        .expect("Unrecoverable failure: peers mutext poisoned");
-                    peers.insert(peer.addr.clone(), peer);
-                }
+                NodeEvent::PeerConnection(conn_event) => match conn_event {
+                    PeerConnectionEvent::IntializingConnection {
+                        inbound: _,
+                        local_peer: _,
+                    } => todo!(),
+                    PeerConnectionEvent::IncommingConnection(_unverified_connection) => todo!(),
+                    PeerConnectionEvent::PeerHandshake(_peer_handshake, _sender) => todo!(),
+                    PeerConnectionEvent::PeerConnected(peer) => {
+                        println!("Peer connected: {:?}", peer);
+                        let mut peers = peers
+                            .lock()
+                            .expect("Unrecoverable failure: peers mutext poisoned");
+                        peers.insert(peer.addr.clone(), peer);
+                    }
+                },
                 NodeEvent::PeerDisconnected(id) => {
                     println!("Peer disconnected: {}", id);
                 }
                 NodeEvent::Message { peer_id, message } => {
                     println!("Message from {}: {:?}", peer_id, message);
                 }
-                NodeEvent::PeerHandshake(_peer_handshake, _sender) => todo!(),
             }
         }
     }
