@@ -1,5 +1,6 @@
 use tokio::net::tcp::OwnedWriteHalf;
 
+// TODO: duplication with PendingPeer
 #[derive(Debug)]
 pub struct UnverifiedConnection {
     addr: String,

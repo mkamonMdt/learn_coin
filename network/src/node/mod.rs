@@ -8,10 +8,29 @@ use crate::node::peer::Peer;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
+use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-type Peers = Arc<Mutex<HashMap<String, Peer>>>;
+#[derive(Clone)]
+struct Peers {
+    connected: Arc<Mutex<HashMap<String, Peer>>>,
+    pending: Arc<Mutex<HashMap<String, PendingPeer>>>,
+}
+
+impl Peers {
+    fn new() -> Self {
+        Self {
+            connected: Arc::new(Mutex::new(HashMap::new())),
+            pending: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+struct PendingPeer {
+    addr: String,
+    writer: OwnedWriteHalf,
+}
 
 pub struct Node {
     sender: mpsc::Sender<NodeEvent>,
@@ -28,7 +47,7 @@ impl Node {
         let (tx, rx) = mpsc::channel::<NodeEvent>(30);
         println!("Node starting on {}", listen_addr);
 
-        let peers: Arc<Mutex<HashMap<String, Peer>>> = Arc::new(Mutex::new(HashMap::new()));
+        let peers = Peers::new();
         {
             let value = peers.clone();
             tokio::spawn(async move { Self::start_node(value.clone(), rx).await });
@@ -73,6 +92,7 @@ impl Node {
                     PeerConnectionEvent::PeerConnected(peer) => {
                         println!("Peer connected: {:?}", peer);
                         let mut peers = peers
+                            .connected
                             .lock()
                             .expect("Unrecoverable failure: peers mutext poisoned");
                         peers.insert(peer.addr.clone(), peer);
