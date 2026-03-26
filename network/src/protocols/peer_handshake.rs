@@ -11,6 +11,10 @@ pub async fn initiate_protocol(
     local_peer: Peer,
     stream: TcpStream,
 ) -> Result<(Peer, OwnedReadHalf, OwnedWriteHalf), ()> {
+    println!(
+        "{:?}: ---init---- initiating handshake protocol",
+        local_peer
+    );
     let local_iv = generate_rand_iv();
     let msg = PeerHandshake::Request(ProofOfPossessionRequest {
         iv: local_iv,
@@ -18,9 +22,15 @@ pub async fn initiate_protocol(
     });
 
     let (mut reader, mut writer) = stream.into_split();
+
     let _ = write_msg(&mut writer, &msg).await;
+    println!("{:?}: ---init---- handshake request sent", local_peer);
 
     let response: PeerHandshake = read_msg(&mut reader).await.unwrap();
+    println!(
+        "{:?}: ---init---- handshake 1st response received",
+        local_peer
+    );
     let (remote_peer, remote_iv) = match response {
         PeerHandshake::Response(proof) => {
             if !proof.verify_incomming(&local_peer, local_iv) {
@@ -32,21 +42,67 @@ pub async fn initiate_protocol(
             return Err(());
         }
     };
+    println!(
+        "{:?}: ---init---- handshake 1st response verified from {:?}",
+        local_peer, remote_peer
+    );
 
     let req = ProofOfPossessionRequest {
         iv: remote_iv,
         peer: remote_peer.clone(),
     };
-    let msg = PeerHandshake::from_request(req, local_peer, local_iv);
+    let msg = PeerHandshake::from_request(req, local_peer.clone(), local_iv);
     let _ = write_msg(&mut writer, msg).await;
+    println!("{:?}: ---init---- handshake 2nd response sent", local_peer);
 
     Ok((remote_peer, reader, writer))
 }
+
 pub async fn accept_protocol(
-    _local_peer: Peer,
-    _stream: TcpStream,
+    local_peer: Peer,
+    stream: TcpStream,
 ) -> Result<(Peer, OwnedReadHalf, OwnedWriteHalf), ()> {
-    todo!()
+    let (mut reader, mut writer) = stream.into_split();
+    // read request
+    let request: PeerHandshake = read_msg(&mut reader).await.unwrap();
+    let local_iv = generate_rand_iv();
+    println!("{:?}: ---acc---- handshake request received", local_peer);
+
+    // send response
+    let remote_peer = match request {
+        PeerHandshake::Request(req) => {
+            let response = PeerHandshake::from_request(req.clone(), local_peer.clone(), local_iv);
+            let _ = write_msg(&mut writer, response).await;
+            req.peer
+        }
+        _ => {
+            return Err(());
+        }
+    };
+    println!("{:?}: ---acc---- handshake 1st response sent", local_peer);
+
+    // read & verify response
+    let response: PeerHandshake = read_msg(&mut reader).await.unwrap();
+    println!(
+        "{:?}: ---acc---- handshake 2nd response received",
+        local_peer
+    );
+    match response {
+        PeerHandshake::Response(proof) => {
+            if !proof.verify_incomming(&local_peer, local_iv) {
+                return Err(());
+            }
+        }
+        _ => {
+            return Err(());
+        }
+    };
+    println!(
+        "{:?}: ---acc---- handshake 2nd response verified",
+        local_peer
+    );
+
+    Ok((remote_peer, reader, writer))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -55,7 +111,7 @@ pub enum PeerHandshake {
     Response(ProofOfPossessionResponse),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProofOfPossessionRequest {
     /// TODO: should be a type, preferebly an enum to update versions
     iv: [u8; 8],
@@ -77,10 +133,10 @@ impl PeerHandshake {
     fn from_request(req: ProofOfPossessionRequest, local_peer: Peer, local_iv: [u8; 8]) -> Self {
         let mut hasher = Sha256::new();
 
-        hasher.update(req.peer.to_bytes());
-        hasher.update(req.iv);
         hasher.update(local_peer.to_bytes());
         hasher.update(local_iv);
+        hasher.update(req.peer.to_bytes());
+        hasher.update(req.iv);
 
         Self::Response(ProofOfPossessionResponse {
             sender: local_peer,
@@ -108,6 +164,7 @@ impl ProofOfPossessionResponse {
         hasher.update(self.sender_iv);
         hasher.update(self.receiver.to_bytes());
         hasher.update(self.receiver_iv);
+
         let calculated_sig: [u8; 32] = hasher.finalize().into();
         self.signature == calculated_sig
     }
