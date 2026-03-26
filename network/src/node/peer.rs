@@ -1,8 +1,8 @@
+use crate::comm::read_msg;
 use crate::NetworkError;
 use crate::{comm::events::NodeEvent, protocols::peer_handshake::initiate_protocol};
 use serde::{Deserialize, Serialize};
-use std::io;
-use tokio::{io::AsyncReadExt, net::TcpStream, sync::mpsc};
+use tokio::{net::TcpStream, sync::mpsc};
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -44,26 +44,12 @@ pub async fn connect_to_peer(
 }
 
 pub async fn handle_peer(
-    mut read_half: tokio::net::tcp::OwnedReadHalf,
+    mut reader: tokio::net::tcp::OwnedReadHalf,
     node_tx: mpsc::Sender<NodeEvent>,
     addr: String,
-) -> io::Result<()> {
-    while let Ok(len) = read_half.read_u32().await {
-        if len > 10_000 {
-            break;
-        }
-
-        let mut message = vec![0u8; len as usize];
-        read_half.read_exact(&mut message).await?;
-
-        // here we would need to send an optional oneshot channel that we await on
-        node_tx
-            .send(NodeEvent::NetworkMessage {
-                peer_id: addr.clone(),
-                message,
-            })
-            .await
-            .ok();
+) -> std::io::Result<()> {
+    while let Ok(msg) = read_msg(&mut reader).await {
+        node_tx.send(NodeEvent::NetworkMessage(msg)).await.ok();
     }
 
     node_tx.send(NodeEvent::PeerDisconnected(addr)).await.ok();

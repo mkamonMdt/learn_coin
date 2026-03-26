@@ -6,12 +6,18 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::OwnedReadHalf;
 use tokio::net::tcp::OwnedWriteHalf;
 
+const MAX_MSG_SIZE: u32 = 10 * 1024 * 1024; // 10 MiB
+
 pub async fn write_msg<M>(writer: &mut OwnedWriteHalf, msg: M) -> std::io::Result<()>
 where
     M: Serialize,
 {
     let bytes = bincode::serialize(&msg).unwrap();
     let len = bytes.len() as u32;
+
+    if len > MAX_MSG_SIZE {
+        return Err(std::io::Error::other("write_msg: msg too big"));
+    }
 
     writer.write_u32(len).await?;
     writer.write_all(&bytes).await?;
@@ -25,14 +31,18 @@ where
 {
     let mut len_buf = [0u8; 4];
     reader.read_exact(&mut len_buf).await?;
-    let len = u32::from_be_bytes(len_buf) as usize;
-
-    if len == 0 {
-        return Err(std::io::Error::other("todo"));
+    let len = u32::from_be_bytes(len_buf);
+    if len > MAX_MSG_SIZE {
+        return Err(std::io::Error::other("read_msg: msg too big"));
     }
 
-    let mut data = vec![0u8; len];
+    if len == 0 {
+        return Err(std::io::Error::other("read_msg: empty msg"));
+    }
+
+    let mut data = vec![0u8; len as usize];
     reader.read_exact(&mut data).await?;
 
-    bincode::deserialize(&data).map_err(|_| std::io::Error::other("todo"))
+    bincode::deserialize(&data)
+        .map_err(|_| std::io::Error::other("read_msg: deserialization error"))
 }

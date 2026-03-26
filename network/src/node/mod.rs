@@ -1,6 +1,7 @@
 pub mod listener;
 pub mod peer;
 
+use crate::comm::events::NetworkMessage;
 use crate::comm::events::NodeEvent;
 use crate::node::peer::Peer;
 use std::collections::HashMap;
@@ -12,22 +13,19 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 struct Peers {
-    connected: Arc<Mutex<HashMap<String, Peer>>>,
-    pending: Arc<Mutex<HashMap<String, PendingPeer>>>,
+    connected: Arc<Mutex<HashMap<String, PeerContext>>>,
 }
 
 impl Peers {
     fn new() -> Self {
         Self {
             connected: Arc::new(Mutex::new(HashMap::new())),
-            pending: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
 
-/// TODO: remove that. move writer to Peer context
-pub struct PendingPeer {
-    addr: String,
+pub struct PeerContext {
+    peer: Peer,
     writer: OwnedWriteHalf,
 }
 
@@ -84,21 +82,15 @@ impl Node {
             match event {
                 NodeEvent::PeerConnected(peer, writer) => {
                     let mut pending = peers
-                        .pending
+                        .connected
                         .lock()
                         .expect("Unrecoverable failure: pending peers mutext poisoned");
-                    pending.insert(
-                        peer.addr.clone(),
-                        PendingPeer {
-                            addr: peer.addr,
-                            writer,
-                        },
-                    );
+                    pending.insert(peer.addr.clone(), PeerContext { peer, writer });
                 }
                 NodeEvent::PeerDisconnected(id) => {
                     println!("Peer disconnected: {}", id);
                 }
-                NodeEvent::NetworkMessage { peer_id, message } => {
+                NodeEvent::NetworkMessage(NetworkMessage { peer_id, message }) => {
                     println!("Message from {}:{:?}: ", peer_id, message);
                 }
             }

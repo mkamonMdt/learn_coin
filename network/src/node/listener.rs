@@ -3,7 +3,7 @@ use crate::protocols::peer_handshake::accept_protocol;
 use crate::{comm::events::NodeEvent, node::peer::Peer};
 use tokio::{net::TcpListener, sync::mpsc};
 
-pub async fn start_listener(local_peer: Peer, addr: String, node_tx: mpsc::Sender<NodeEvent>) -> ! {
+pub async fn start_listener(local_peer: Peer, addr: String, node_tx: mpsc::Sender<NodeEvent>) {
     let listener = TcpListener::bind(addr.clone())
         .await
         .expect("Failed to bind");
