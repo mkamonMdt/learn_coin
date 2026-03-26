@@ -1,9 +1,7 @@
-pub mod connection;
 pub mod listener;
 pub mod peer;
 
 use crate::comm::events::NodeEvent;
-use crate::comm::events::PeerConnectionEvent;
 use crate::node::peer::Peer;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -27,7 +25,8 @@ impl Peers {
     }
 }
 
-struct PendingPeer {
+/// TODO: remove that. move writer to Peer context
+pub struct PendingPeer {
     addr: String,
     writer: OwnedWriteHalf,
 }
@@ -53,6 +52,7 @@ impl Node {
             tokio::spawn(async move { Self::start_node(value.clone(), rx).await });
         }
         tokio::spawn(crate::node::listener::start_listener(
+            local_peer.clone(),
             listen_addr.to_string(),
             tx.clone(),
         ));
@@ -82,27 +82,24 @@ impl Node {
     async fn start_node(peers: Peers, mut rx: mpsc::Receiver<NodeEvent>) {
         while let Some(event) = rx.recv().await {
             match event {
-                NodeEvent::PeerConnection(conn_event) => match conn_event {
-                    PeerConnectionEvent::IntializingConnection {
-                        inbound: _,
-                        local_peer: _,
-                    } => todo!(),
-                    PeerConnectionEvent::IncommingConnection(_unverified_connection) => todo!(),
-                    PeerConnectionEvent::PeerHandshake(_peer_handshake, _sender) => todo!(),
-                    PeerConnectionEvent::PeerConnected(peer) => {
-                        println!("Peer connected: {:?}", peer);
-                        let mut peers = peers
-                            .connected
-                            .lock()
-                            .expect("Unrecoverable failure: peers mutext poisoned");
-                        peers.insert(peer.addr.clone(), peer);
-                    }
-                },
+                NodeEvent::PeerConnected(peer, writer) => {
+                    let mut pending = peers
+                        .pending
+                        .lock()
+                        .expect("Unrecoverable failure: pending peers mutext poisoned");
+                    pending.insert(
+                        peer.addr.clone(),
+                        PendingPeer {
+                            addr: peer.addr,
+                            writer,
+                        },
+                    );
+                }
                 NodeEvent::PeerDisconnected(id) => {
                     println!("Peer disconnected: {}", id);
                 }
-                NodeEvent::Message { peer_id, message } => {
-                    println!("Message from {}: {:?}", peer_id, message);
+                NodeEvent::NetworkMessage { peer_id, message } => {
+                    println!("Message from {}:{:?}: ", peer_id, message);
                 }
             }
         }

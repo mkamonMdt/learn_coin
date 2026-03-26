@@ -1,7 +1,5 @@
-use crate::comm::events::PeerConnectionEvent;
-use crate::comm::net_message::NetworkMessage;
 use crate::NetworkError;
-use crate::{comm::events::NodeEvent, node::connection::UnverifiedConnection};
+use crate::{comm::events::NodeEvent, protocols::peer_handshake::initiate_protocol};
 use serde::{Deserialize, Serialize};
 use std::io;
 use tokio::{io::AsyncReadExt, net::TcpStream, sync::mpsc};
@@ -33,24 +31,9 @@ pub async fn connect_to_peer(
     match TcpStream::connect(addr.clone()).await {
         Ok(stream) => {
             tokio::spawn({
-                let (read_half, write_half) = stream.into_split();
-                let _ = node_tx
-                    .send(NodeEvent::PeerConnection(
-                        PeerConnectionEvent::IntializingConnection {
-                            inbound: UnverifiedConnection::new(addr.clone(), write_half),
-                            local_peer,
-                        },
-                    ))
-                    .await;
-
-                // TODO: move it to event handling
-                /*
-                   let peer = peer_handshake::initiate_protocol(local_peer, node_tx.clone())
-                        .await
-                        .unwrap();
-                */
-
-                handle_peer(read_half, node_tx, addr.clone())
+                let (peer, reader, writer) = initiate_protocol(local_peer, stream).await.unwrap();
+                let _ = node_tx.send(NodeEvent::PeerConnected(peer, writer)).await;
+                handle_peer(reader, node_tx, addr.clone())
             });
             Ok(())
         }
@@ -65,25 +48,17 @@ pub async fn handle_peer(
     node_tx: mpsc::Sender<NodeEvent>,
     addr: String,
 ) -> io::Result<()> {
-    /*
-        node_tx
-            .send(NodeEvent::PeerConnected(peer.clone()))
-            .await
-            .ok();
-    */
-
     while let Ok(len) = read_half.read_u32().await {
         if len > 10_000 {
             break;
         }
 
-        let mut buffer = vec![0u8; len as usize];
-        read_half.read_exact(&mut buffer).await?;
+        let mut message = vec![0u8; len as usize];
+        read_half.read_exact(&mut message).await?;
 
-        let message: NetworkMessage = bincode::deserialize(&buffer).unwrap();
         // here we would need to send an optional oneshot channel that we await on
         node_tx
-            .send(NodeEvent::Message {
+            .send(NodeEvent::NetworkMessage {
                 peer_id: addr.clone(),
                 message,
             })

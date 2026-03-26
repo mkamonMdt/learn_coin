@@ -1,26 +1,27 @@
-use crate::comm::events::NodeEvent;
-use crate::comm::events::PeerConnectionEvent;
+use crate::comm::{read_msg, write_msg};
 use crate::node::peer::Peer;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::sync::mpsc;
-use tokio::sync::oneshot;
+use tokio::net::tcp::OwnedReadHalf;
+use tokio::net::tcp::OwnedWriteHalf;
+use tokio::net::TcpStream;
 
 pub async fn initiate_protocol(
     local_peer: Peer,
-    event_handler: mpsc::Sender<NodeEvent>,
-) -> Result<Peer, ()> {
+    stream: TcpStream,
+) -> Result<(Peer, OwnedReadHalf, OwnedWriteHalf), ()> {
     let local_iv = generate_rand_iv();
-    let msg = PeerHandshake::new(local_peer.clone(), local_iv);
-    let (tx, rx) = oneshot::channel();
-    let _ = event_handler
-        .send(NodeEvent::PeerConnection(
-            PeerConnectionEvent::PeerHandshake(msg, tx),
-        ))
-        .await;
+    let msg = PeerHandshake::Request(ProofOfPossessionRequest {
+        iv: local_iv,
+        peer: local_peer.clone(),
+    });
 
-    let (remote_peer, remote_iv) = match rx.await.unwrap() {
+    let (mut reader, mut writer) = stream.into_split();
+    let _ = write_msg(&mut writer, &msg).await;
+
+    let response: PeerHandshake = read_msg(&mut reader).await.unwrap();
+    let (remote_peer, remote_iv) = match response {
         PeerHandshake::Response(proof) => {
             if !proof.verify_incomming(&local_peer, local_iv) {
                 return Err(());
@@ -37,17 +38,14 @@ pub async fn initiate_protocol(
         peer: remote_peer.clone(),
     };
     let msg = PeerHandshake::from_request(req, local_peer, local_iv);
-    let (tx, _rx) = oneshot::channel();
-    let _ = event_handler
-        .send(NodeEvent::PeerConnection(
-            PeerConnectionEvent::PeerHandshake(msg, tx),
-        ))
-        .await;
+    let _ = write_msg(&mut writer, msg).await;
 
-    Ok(remote_peer)
+    Ok((remote_peer, reader, writer))
 }
-
-pub async fn accept_protocol(_event_handler: mpsc::Sender<NodeEvent>) -> Result<Peer, ()> {
+pub async fn accept_protocol(
+    _local_peer: Peer,
+    _stream: TcpStream,
+) -> Result<(Peer, OwnedReadHalf, OwnedWriteHalf), ()> {
     todo!()
 }
 

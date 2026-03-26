@@ -1,34 +1,21 @@
-use crate::comm::events::NodeEvent;
 use crate::node::peer::handle_peer;
+use crate::protocols::peer_handshake::accept_protocol;
+use crate::{comm::events::NodeEvent, node::peer::Peer};
 use tokio::{net::TcpListener, sync::mpsc};
 
-pub async fn start_listener(addr: String, node_tx: mpsc::Sender<NodeEvent>) -> ! {
+pub async fn start_listener(local_peer: Peer, addr: String, node_tx: mpsc::Sender<NodeEvent>) -> ! {
     let listener = TcpListener::bind(addr.clone())
         .await
         .expect("Failed to bind");
 
     loop {
-        //
-        let (stream, _) = listener.accept().await.unwrap();
-        let (read_half, _write_half) = stream.into_split();
+        let (stream, addr) = listener.accept().await.unwrap();
         let node_tx = node_tx.clone();
-        let addr = addr.clone();
+        let local_peer = local_peer.clone();
         tokio::spawn(async move {
-            // TODO: move it to event handling
-            // let peer = accept_protocol(node_tx.clone()).await.unwrap();
-
-            // TODO: self writing? Do I need that?
-            /*
-                        let _ = node_tx
-                            .send(NodeEvent::PeerConnection(
-                                PeerConnectionEvent::IncommingConnection(UnverifiedConnection::new(
-                                    addr.clone(),
-                                    write_half,
-                                )),
-                            ))
-                            .await;
-            */
-            let _ = handle_peer(read_half, node_tx, addr).await;
+            let (peer, reader, writer) = accept_protocol(local_peer, stream).await.unwrap();
+            let _ = node_tx.send(NodeEvent::PeerConnected(peer, writer)).await;
+            let _ = handle_peer(reader, node_tx, addr.to_string()).await;
         });
     }
 }
