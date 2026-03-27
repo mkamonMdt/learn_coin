@@ -1,4 +1,4 @@
-use crate::comm::PeerReader;
+use crate::protocols::peer_listener::listen_peer;
 use crate::NetworkError;
 use crate::{comm::events::NodeEvent, protocols::peer_handshake::initiate_protocol};
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,7 @@ pub async fn connect_to_peer(
                 let (peer, reader, writer) =
                     initiate_protocol(local_peer, reader, writer).await.unwrap();
                 let _ = node_tx.send(NodeEvent::PeerConnected(peer, writer)).await;
-                handle_peer(reader, node_tx, addr.clone())
+                listen_peer(reader, node_tx, addr.clone())
             });
             Ok(())
         }
@@ -43,17 +43,4 @@ pub async fn connect_to_peer(
             format!("Failed to connect: {:?}", e).to_string(),
         )),
     }
-}
-
-pub async fn handle_peer(
-    mut reader: tokio::net::tcp::OwnedReadHalf,
-    node_tx: mpsc::Sender<NodeEvent>,
-    addr: String,
-) -> std::io::Result<()> {
-    while let Ok(msg) = reader.read_from_peer().await {
-        node_tx.send(NodeEvent::NetworkMessage(msg)).await.ok();
-    }
-
-    node_tx.send(NodeEvent::PeerDisconnected(addr)).await.ok();
-    Ok(())
 }
