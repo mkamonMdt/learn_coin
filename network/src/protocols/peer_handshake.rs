@@ -1,4 +1,4 @@
-use crate::comm::{read_msg, write_msg};
+use crate::comm::{PeerReader, PeerWriter};
 use crate::node::peer::Peer;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -7,10 +7,15 @@ use tokio::net::tcp::OwnedReadHalf;
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::TcpStream;
 
-pub async fn initiate_protocol(
+pub async fn initiate_protocol<R, W>(
     local_peer: Peer,
-    stream: TcpStream,
-) -> Result<(Peer, OwnedReadHalf, OwnedWriteHalf), ()> {
+    mut reader: R,
+    mut writer: W,
+) -> Result<(Peer, R, W), ()>
+where
+    R: PeerReader<PeerHandshake>,
+    W: PeerWriter<PeerHandshake>,
+{
     println!(
         "{:?}: ---init---- initiating handshake protocol",
         local_peer
@@ -21,12 +26,12 @@ pub async fn initiate_protocol(
         peer: local_peer.clone(),
     });
 
-    let (mut reader, mut writer) = stream.into_split();
+    // let (mut reader, mut writer) = stream.into_split();
 
-    let _ = write_msg(&mut writer, &msg).await;
+    let _ = writer.write_to_peer(msg).await;
     println!("{:?}: ---init---- handshake request sent", local_peer);
 
-    let response: PeerHandshake = read_msg(&mut reader).await.unwrap();
+    let response: PeerHandshake = reader.read_from_peer().await.unwrap();
     println!(
         "{:?}: ---init---- handshake 1st response received",
         local_peer
@@ -52,7 +57,7 @@ pub async fn initiate_protocol(
         peer: remote_peer.clone(),
     };
     let msg = PeerHandshake::from_request(req, local_peer.clone(), local_iv);
-    let _ = write_msg(&mut writer, msg).await;
+    let _ = writer.write_to_peer(msg).await;
     println!("{:?}: ---init---- handshake 2nd response sent", local_peer);
 
     Ok((remote_peer, reader, writer))
@@ -64,7 +69,7 @@ pub async fn accept_protocol(
 ) -> Result<(Peer, OwnedReadHalf, OwnedWriteHalf), ()> {
     let (mut reader, mut writer) = stream.into_split();
     // read request
-    let request: PeerHandshake = read_msg(&mut reader).await.unwrap();
+    let request: PeerHandshake = reader.read_from_peer().await.unwrap();
     let local_iv = generate_rand_iv();
     println!("{:?}: ---acc---- handshake request received", local_peer);
 
@@ -72,7 +77,7 @@ pub async fn accept_protocol(
     let remote_peer = match request {
         PeerHandshake::Request(req) => {
             let response = PeerHandshake::from_request(req.clone(), local_peer.clone(), local_iv);
-            let _ = write_msg(&mut writer, response).await;
+            let _ = writer.write_to_peer(response).await;
             req.peer
         }
         _ => {
@@ -82,7 +87,7 @@ pub async fn accept_protocol(
     println!("{:?}: ---acc---- handshake 1st response sent", local_peer);
 
     // read & verify response
-    let response: PeerHandshake = read_msg(&mut reader).await.unwrap();
+    let response: PeerHandshake = reader.read_from_peer().await.unwrap();
     println!(
         "{:?}: ---acc---- handshake 2nd response received",
         local_peer
