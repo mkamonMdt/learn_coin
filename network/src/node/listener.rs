@@ -13,7 +13,8 @@ pub async fn start_listener(local_peer: Peer, addr: String, node_tx: mpsc::Sende
         let node_tx = node_tx.clone();
         let local_peer = local_peer.clone();
         tokio::spawn(async move {
-            let (peer, reader, writer) = accept_protocol(local_peer, stream).await.unwrap();
+            let (reader, writer) = stream.into_split();
+            let (peer, reader, writer) = accept_protocol(local_peer, reader, writer).await.unwrap();
             let _ = node_tx.send(NodeEvent::PeerConnected(peer, writer)).await;
             let _ = handle_peer(reader, node_tx, addr.to_string()).await;
         });
