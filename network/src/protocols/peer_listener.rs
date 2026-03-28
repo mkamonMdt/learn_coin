@@ -1,15 +1,15 @@
-use crate::comm::events::{NetworkMessage, NodeEvent};
-use crate::comm::PeerReader;
+use crate::comm::events::NodeEvent;
+use crate::comm::P2PReceiver;
 
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-pub async fn listen_peer(
-    mut reader: impl PeerReader<NetworkMessage>,
+pub async fn listen_peer<P: P2PReceiver>(
+    mut reader: P,
     node_tx: mpsc::Sender<NodeEvent>,
     peer_id: Uuid,
 ) -> std::io::Result<()> {
-    while let Ok(msg) = reader.read_from_peer().await {
+    while let Ok(msg) = reader.recieve().await {
         node_tx.send(NodeEvent::NetworkMessage(msg)).await.ok();
     }
 

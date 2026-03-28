@@ -87,8 +87,12 @@ impl Node {
                 NodeEvent::PeerDisconnected(id) => {
                     println!("Peer disconnected: {}", id);
                 }
-                NodeEvent::NetworkMessage(NetworkMessage { peer_id, message }) => {
-                    println!("Message from {}:{:?}: ", peer_id, message);
+                NodeEvent::NetworkMessage(NetworkMessage {
+                    peer_id,
+                    protocol_id,
+                    message,
+                }) => {
+                    println!("Message from {}:{:?}: {:?}", peer_id, protocol_id, message);
                 }
             }
         }
