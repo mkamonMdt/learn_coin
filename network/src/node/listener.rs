@@ -9,14 +9,15 @@ pub async fn start_listener(local_peer: Peer, addr: String, node_tx: mpsc::Sende
         .expect("Failed to bind");
 
     loop {
-        let (stream, addr) = listener.accept().await.unwrap();
+        let (stream, _) = listener.accept().await.unwrap();
         let node_tx = node_tx.clone();
         let local_peer = local_peer.clone();
         tokio::spawn(async move {
             let (reader, writer) = stream.into_split();
             let (peer, reader, writer) = accept_protocol(local_peer, reader, writer).await.unwrap();
+            let peer_id = peer.id;
             let _ = node_tx.send(NodeEvent::PeerConnected(peer, writer)).await;
-            let _ = listen_peer(reader, node_tx, addr.to_string()).await;
+            let _ = listen_peer(reader, node_tx, peer_id).await;
         });
     }
 }

@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 struct Peers {
-    connected: Arc<Mutex<HashMap<String, PeerContext>>>,
+    connected: Arc<Mutex<HashMap<Uuid, PeerContext>>>,
 }
 
 impl Peers {
@@ -37,10 +37,7 @@ pub struct Node {
 
 impl Node {
     pub async fn new(listen_addr: String) -> Self {
-        let local_peer = Peer {
-            addr: listen_addr.clone(),
-            id: Uuid::new_v4(),
-        };
+        let local_peer = Peer { id: Uuid::new_v4() };
         let (tx, rx) = mpsc::channel::<NodeEvent>(30);
         println!("Node starting on {}", listen_addr);
 
@@ -85,7 +82,7 @@ impl Node {
                         .connected
                         .lock()
                         .expect("Unrecoverable failure: pending peers mutext poisoned");
-                    pending.insert(peer.addr.clone(), PeerContext { peer, writer });
+                    pending.insert(peer.id, PeerContext { peer, writer });
                 }
                 NodeEvent::PeerDisconnected(id) => {
                     println!("Peer disconnected: {}", id);
