@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use crate::comm::events::{NetworkMessage, ProtocolId};
 use crate::comm::{P2PMessenger, P2PReceiver, P2PSender};
@@ -39,11 +40,12 @@ impl Drop for ProtocolHandle {
     fn drop(&mut self) {
         let _ = self
             .register_tx
-            .blocking_send(ProtocolCmd::Close(self.protocol_id));
+            .try_send(ProtocolCmd::Close(self.protocol_id));
     }
 }
 
 pub struct P2PConnection {
+    id: Uuid,
     outgoing_tx: mpsc::Sender<NetworkMessage>,
     register_tx: mpsc::Sender<ProtocolCmd>,
     _deamon_handle: tokio::task::JoinHandle<()>,
@@ -57,10 +59,15 @@ impl P2PConnection {
         let handle = tokio::spawn(backend_deamon(stream, outgoing_rx, register_rx));
 
         Self {
+            id: Uuid::new_v4(),
             outgoing_tx,
             register_tx,
             _deamon_handle: handle,
         }
+    }
+
+    pub fn get_id(&self) -> Uuid {
+        self.id
     }
 
     pub async fn open_protocol(&self, protocol_id: ProtocolId) -> ProtocolHandle {

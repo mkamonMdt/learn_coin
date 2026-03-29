@@ -3,35 +3,19 @@ pub mod peer;
 
 use crate::comm::events::NetworkMessage;
 use crate::comm::events::NodeEvent;
+use crate::comm::p2p_connection::P2PConnection;
 use crate::node::peer::Peer;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
-use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-#[derive(Clone)]
-struct Peers {
-    connected: Arc<Mutex<HashMap<Uuid, PeerContext>>>,
-}
-
-impl Peers {
-    fn new() -> Self {
-        Self {
-            connected: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-}
-
-pub struct PeerContext {
-    peer: Peer,
-    writer: OwnedWriteHalf,
-}
+type ConnectedPeers = Arc<Mutex<HashMap<Uuid, P2PConnection>>>;
 
 pub struct Node {
     sender: mpsc::Sender<NodeEvent>,
-    peers: Peers,
+    connected_peers: ConnectedPeers,
     local_peer: Peer,
 }
 
@@ -41,10 +25,10 @@ impl Node {
         let (tx, rx) = mpsc::channel::<NodeEvent>(30);
         println!("Node starting on {}", listen_addr);
 
-        let peers = Peers::new();
+        let connected_peers = Arc::new(Mutex::new(HashMap::new()));
         {
-            let value = peers.clone();
-            tokio::spawn(async move { Self::start_node(value.clone(), rx).await });
+            let connected_peers = connected_peers.clone();
+            tokio::spawn(async move { Self::start_node(connected_peers, rx).await });
         }
         tokio::spawn(crate::node::listener::start_listener(
             local_peer.clone(),
@@ -55,7 +39,7 @@ impl Node {
 
         Self {
             sender: tx,
-            peers,
+            connected_peers,
             local_peer,
         }
     }
@@ -74,15 +58,14 @@ impl Node {
         }
     }
 
-    async fn start_node(peers: Peers, mut rx: mpsc::Receiver<NodeEvent>) {
+    async fn start_node(peers: ConnectedPeers, mut rx: mpsc::Receiver<NodeEvent>) {
         while let Some(event) = rx.recv().await {
             match event {
-                NodeEvent::PeerConnected(peer, writer) => {
+                NodeEvent::PeerConnected(connection) => {
                     let mut pending = peers
-                        .connected
                         .lock()
                         .expect("Unrecoverable failure: pending peers mutext poisoned");
-                    pending.insert(peer.id, PeerContext { peer, writer });
+                    pending.insert(connection.get_id(), connection);
                 }
                 NodeEvent::PeerDisconnected(id) => {
                     println!("Peer disconnected: {}", id);

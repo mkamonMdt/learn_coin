@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use crate::node::peer::Peer;
+use crate::comm::p2p_connection::P2PConnection;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -15,9 +15,8 @@ pub enum ProtocolId {
     V0(AlfaProtocols),
 }
 
-#[derive(Debug)]
 pub enum NodeEvent {
-    PeerConnected(Peer, tokio::net::tcp::OwnedWriteHalf),
+    PeerConnected(P2PConnection),
     PeerDisconnected(Uuid),
     NetworkMessage(NetworkMessage),
 }

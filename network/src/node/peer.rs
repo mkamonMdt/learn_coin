@@ -1,4 +1,5 @@
-use crate::protocols::peer_listener::listen_peer;
+use crate::comm::events::ProtocolId;
+use crate::comm::p2p_connection::P2PConnection;
 use crate::NetworkError;
 use crate::{comm::events::NodeEvent, protocols::peer_handshake::initiate_protocol};
 use serde::{Deserialize, Serialize};
@@ -23,13 +24,13 @@ pub async fn connect_to_peer(
 ) -> Result<(), NetworkError> {
     match TcpStream::connect(addr.clone()).await {
         Ok(stream) => {
-            tokio::spawn({
-                let (reader, writer) = stream.into_split();
-                let (peer, reader, writer) =
-                    initiate_protocol(local_peer, reader, writer).await.unwrap();
-                let peer_id = peer.id;
-                let _ = node_tx.send(NodeEvent::PeerConnected(peer, writer)).await;
-                listen_peer(reader, node_tx, peer_id)
+            tokio::spawn(async move {
+                let conneciton = P2PConnection::new(stream).await;
+                let protocol_id = ProtocolId::V0(crate::comm::events::AlfaProtocols::Handshake);
+                let handle = conneciton.open_protocol(protocol_id).await;
+                let _ = node_tx.send(NodeEvent::PeerConnected(conneciton)).await;
+
+                initiate_protocol(local_peer, handle).await;
             });
             Ok(())
         }
