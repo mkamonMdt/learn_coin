@@ -4,13 +4,13 @@ use crate::node::peer::Peer;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, Hash, PartialEq)]
 pub enum AlfaProtocols {
     Handshake,
     Unknown,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, Hash, PartialEq)]
 pub enum ProtocolId {
     V0(AlfaProtocols),
 }
