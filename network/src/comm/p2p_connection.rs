@@ -12,6 +12,12 @@ enum ProtocolCmd {
     Close(ProtocolId),
 }
 
+#[derive(Clone)]
+pub struct UnintiProtocolHandle {
+    outgoing_tx: mpsc::Sender<NetworkMessage>,
+    register_tx: mpsc::Sender<ProtocolCmd>,
+}
+
 pub struct ProtocolHandle {
     outgoing_tx: mpsc::Sender<NetworkMessage>,
     incomming_rx: mpsc::Receiver<NetworkMessage>,
@@ -70,7 +76,16 @@ impl P2PConnection {
         self.id
     }
 
-    pub async fn open_protocol(&self, protocol_id: ProtocolId) -> ProtocolHandle {
+    pub fn get_uninit_handle(&self) -> UnintiProtocolHandle {
+        UnintiProtocolHandle {
+            outgoing_tx: self.outgoing_tx.clone(),
+            register_tx: self.register_tx.clone(),
+        }
+    }
+}
+
+impl UnintiProtocolHandle {
+    pub async fn open_protocol(self, protocol_id: ProtocolId) -> ProtocolHandle {
         let (incomming_tx, incomming_rx) = mpsc::channel::<NetworkMessage>(10);
 
         //TODO: Error handling
@@ -80,9 +95,9 @@ impl P2PConnection {
             .await;
 
         ProtocolHandle {
-            outgoing_tx: self.outgoing_tx.clone(),
+            outgoing_tx: self.outgoing_tx,
             incomming_rx,
-            register_tx: self.register_tx.clone(),
+            register_tx: self.register_tx,
             protocol_id,
         }
     }

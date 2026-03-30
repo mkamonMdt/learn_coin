@@ -1,25 +1,30 @@
-use crate::comm::events::ProtocolId;
+use crate::comm::events::NodeEvent;
 use crate::comm::p2p_connection::P2PConnection;
-use crate::protocols::peer_handshake::accept_protocol;
-use crate::{comm::events::NodeEvent, node::peer::Peer};
-use tokio::{net::TcpListener, sync::mpsc};
+use crate::node::ConnectedPeers;
+use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 
-pub async fn start_listener(local_peer: Peer, addr: String, node_tx: mpsc::Sender<NodeEvent>) {
+pub async fn start_listener(
+    addr: String,
+    connected_peers: ConnectedPeers,
+    event_sender: mpsc::Sender<NodeEvent>,
+) {
     let listener = TcpListener::bind(addr.clone())
         .await
         .expect("Failed to bind");
 
     loop {
         let (stream, _) = listener.accept().await.unwrap();
-        let node_tx = node_tx.clone();
-        let local_peer = local_peer.clone();
-        tokio::spawn(async move {
-            let conneciton = P2PConnection::new(stream).await;
-            let protocol_id = ProtocolId::V0(crate::comm::events::AlfaProtocols::Handshake);
-            let handle = conneciton.open_protocol(protocol_id).await;
-            let _ = node_tx.send(NodeEvent::PeerConnected(conneciton)).await;
+        let connected_peers = connected_peers.clone();
+        let connection = P2PConnection::new(stream).await;
+        let id = connection.get_id();
 
-            accept_protocol(local_peer, handle).await;
-        });
+        {
+            let mut pending = connected_peers
+                .lock()
+                .expect("Unrecoverable failure: pending peers mutext poisoned");
+            pending.insert(id, connection);
+        }
+        let _ = event_sender.send(NodeEvent::PeerConnected(id)).await;
     }
 }

@@ -1,4 +1,4 @@
-workspace = { members = ["bchain", "learncoin-contracts", "network"]  }
+workspace = { members = ["bchain", "client", "learncoin-contracts", "network", "client"]  }
 [package]
 name = "learn_coin"
 version = "0.1.0"
@@ -9,3 +9,4 @@ edition = "2021"
 [dependencies]
 bchain = {path = "bchain"}
 network = {path = "network"}
+client = {path = "client"}

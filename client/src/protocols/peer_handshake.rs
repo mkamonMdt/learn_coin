@@ -1,7 +1,7 @@
-use crate::comm::events::{NetworkMessage, ProtocolId};
-use crate::comm::P2PMessenger;
-use crate::node::peer::Peer;
-use crate::NetworkError;
+use network::comm::events::{NetworkMessage, ProtocolId};
+use network::comm::P2PMessenger;
+use network::node::peer::Peer;
+use network::NetworkError;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -121,7 +121,7 @@ impl TryInto<NetworkMessage> for PeerHandshake {
 
         Ok(NetworkMessage {
             peer_id,
-            protocol_id: ProtocolId::V0(crate::comm::events::AlfaProtocols::Handshake),
+            protocol_id: ProtocolId::V0(network::comm::events::AlfaProtocols::Handshake),
             message,
         })
     }
@@ -131,7 +131,7 @@ impl TryFrom<NetworkMessage> for PeerHandshake {
     type Error = NetworkError;
 
     fn try_from(value: NetworkMessage) -> Result<Self, Self::Error> {
-        if let ProtocolId::V0(crate::comm::events::AlfaProtocols::Handshake) = value.protocol_id {
+        if let ProtocolId::V0(network::comm::events::AlfaProtocols::Handshake) = value.protocol_id {
             Ok(bincode::deserialize(&value.message).map_err(|e| {
                 NetworkError::PeerFailure(format!("Handshake: Could not deserialize:{}", e))
             })?)
