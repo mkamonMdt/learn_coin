@@ -1,0 +1,14 @@
+@startuml
+
+PeerA -> PeerB: HandshakeRequest
+note left : Sending own pub key\nand random iv
+
+PeerB -> PeerA: 1st HandshakeResponse
+note right: Responding with signature,\nown pub key\nand random iv
+
+PeerA -> PeerB: 2nd HandshakeResponse
+note left: Responding with signature\nof full msg
+
+
+@enduml
+
