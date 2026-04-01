@@ -20,6 +20,8 @@ or as big as:
 
 There are no strict boundaries. The central theme is to experiment while continuously raising sophistication of the project.
 
+Please Note: All direct or indirect references to other projects serve just as a mean to explain why I would like to explore the subject and learn from it.
+
 ## Leading goals as of March 2026
 
 ### Traiting out a protocol infrastructure
@@ -76,14 +78,97 @@ As an example the management, basic properties and much more could be derived
 ```rust
 #[derive(Protocol)]
 #[requests(timeout = 100ms, repeat = 5)]
-#[cancel_on = [self, BlackListUpdateProtocol]]
+#[cancel_on = [self, BlackListUpdateProtocol, ...]]
 #[ignore_if = [...]]
 pub struct HandshakeProtocol {
     local_peer: Peer,
 }
 ```
 
-### testing without repeated env setup
+### Protocols lesson 1:
 
-### The (very) stretch goal
+When trying to abstract out the `P2PMessenger` I kept falling the same trap over and over again:
 
+> The connected Peer is the Peer that made through a handshake procedure
+
+At first it seems logical, why to talk with the guy if we do not know each other?
+But the problem is, how to handle P2P communication? Should I make some separation of the two kids of Peers like in [Separation of Connected/Pending Peers](https://github.com/mkamonMdt/learn_coin/commit/1a20dfc89276b5cba5233cf56d4ad83130512d45) ?
+
+```rust
+#[derive(Clone)]
+struct Peers {
+    connected: Arc<Mutex<HashMap<String, Peer>>>,
+    pending: Arc<Mutex<HashMap<String, PendingPeer>>>,
+}
+struct PendingPeer {
+    addr: String,
+    writer: OwnedWriteHalf,
+}
+```
+
+Then I could just pass a `Writer` handle onced a Peer is connected to `Client`
+
+```rust
+#[derive(Debug)]
+pub enum NodeEvent {
+    PeerConnected(Peer, tokio::net::tcp::OwnedWriteHalf),
+    PeerDisconnected(String),
+    NetworkMessage { peer_id: String, message: Vec<u8> },
+}
+```
+
+But how I would handle repeated messages in the `Handshake` protocol? Smells like an if inside the protocol trying to manage outside conditions.
+So the resolution is fairly simple: Just make the protocol layer to handle protocols and the communication layer to handle communication.
+
+Communication layer runs a deamon dispatcher
+
+```rust
+async fn backend_deamon(
+    stream: TcpStream,
+    mut outgoing_rx: mpsc::Receiver<NetworkMessage>,
+    mut register_rx: mpsc::Receiver<ProtocolCmd>,
+) {
+    let mut protocol_registry: HashMap<ProtocolId, mpsc::Sender<NetworkMessage>> = HashMap::new();
+    let (mut reader, mut writer) = stream.into_split();
+    loop {
+        tokio::select! {
+            Some(payload) = outgoing_rx.recv() => {
+                let _ = writer.send(payload).await;
+            }
+            Ok(incomming) = reader.recieve()=> {
+                if let Some(tx) = protocol_registry.get(&incomming.protocol_id) {
+                    let _ = tx.send(incomming).await;
+                }
+            }
+            Some(cmd) = register_rx.recv() => {
+                match cmd {
+                    ProtocolCmd::Open(protocol_id, sender) => {protocol_registry.insert(protocol_id, sender);
+                    }
+                    ProtocolCmd::Close(protocol_id) =>{ protocol_registry.remove(&protocol_id);}
+                }
+
+            }
+        }
+    }
+}
+```
+
+Protocol layer calls node for a new Protocol Handle
+
+```rust
+async fn handle_network_event(local_peer: Peer, node: Arc<Node>, event: NodeEvent) {
+    match event {
+        NodeEvent::PeerConnected(uuid) => {
+            let protocol_handle = node
+                .open_protocol(uuid, ProtocolId::V0(AlfaProtocols::Handshake))
+                .await
+                .unwrap();
+            HandshakeProtocol::from(local_peer)
+                .accept(protocol_handle)
+                .await;
+        }
+        NodeEvent::PeerDisconnected(_uuid) => todo!(),
+        NodeEvent::NetworkMessage(_network_message) => todo!(),
+    }
+}
+```
