@@ -57,9 +57,33 @@ Starting simple with a made-up handshake protocol:
 
 ![handshake protocol](./docs/diagrams/handshake.png)
 
-### testing without repeated env setup
+That simple protcol already provides meaningful insights. A protocol, at its very minimum, needs
 
-### testing without IO
+- some local context (`self` used here, but some generic `Context` type could be too)
+- some way of communicating with outside world (`P2PMessanger` - wrapping a real comm means or a Mock)
+- (todo!) some way of cummunicating with owning `Clinet`
+
+```rust
+pub trait TwoPartyExchange {
+    async fn initiate(self, messanger: impl P2PMessenger);
+    async fn accept(self, messanger: impl P2PMessenger);
+}
+```
+
+That approach already suggest (but don't forbids) that potential interactions/collisions should be managed, elsewhere.
+As an example the management, basic properties and much more could be derived
+
+```rust
+#[derive(Protocol)]
+#[requests(timeout = 100ms, repeat = 5)]
+#[cancel_on = [self, BlackListUpdateProtocol]]
+#[ignore_if = [...]]
+pub struct HandshakeProtocol {
+    local_peer: Peer,
+}
+```
+
+### testing without repeated env setup
 
 ### The (very) stretch goal
 

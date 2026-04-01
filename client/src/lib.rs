@@ -1,13 +1,13 @@
 mod protocols;
 
-use std::sync::Arc;
-
-use crate::protocols::peer_handshake;
+use crate::protocols::TwoPartyExchange;
+use crate::protocols::peer_handshake::HandshakeProtocol;
 use network::comm::events::AlfaProtocols;
 use network::comm::events::NodeEvent;
 use network::comm::events::ProtocolId;
 use network::node::Node;
 use network::node::peer::Peer;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -26,7 +26,9 @@ pub async fn run_clinet(local_addr: String, bootstrap: Option<String>) {
             .unwrap();
 
         tokio::spawn(async move {
-            peer_handshake::initiate_protocol(local_peer, protocol_handle).await;
+            HandshakeProtocol::from(local_peer)
+                .initiate(protocol_handle)
+                .await;
         });
     }
 
@@ -40,7 +42,7 @@ pub async fn run_clinet(local_addr: String, bootstrap: Option<String>) {
                 let local_peer = local_peer.clone();
                 let node = node.clone();
                 tokio::spawn(async move{
-                handle_network_event(local_peer ,node, event).await;
+                    handle_network_event(local_peer ,node, event).await;
                 });
             }
 
@@ -56,7 +58,9 @@ async fn handle_network_event(local_peer: Peer, node: Arc<Node>, event: NodeEven
                 .open_protocol(uuid, ProtocolId::V0(AlfaProtocols::Handshake))
                 .await
                 .unwrap();
-            peer_handshake::accept_protocol(local_peer, protocol_handle).await;
+            HandshakeProtocol::from(local_peer)
+                .accept(protocol_handle)
+                .await;
         }
         NodeEvent::PeerDisconnected(_uuid) => todo!(),
         NodeEvent::NetworkMessage(_network_message) => todo!(),

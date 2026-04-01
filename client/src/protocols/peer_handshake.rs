@@ -1,3 +1,4 @@
+use crate::protocols::TwoPartyExchange;
 use network::comm::events::{NetworkMessage, ProtocolId};
 use network::comm::P2PMessenger;
 use network::node::peer::Peer;
@@ -7,100 +8,124 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-pub async fn initiate_protocol(local_peer: Peer, mut messanger: impl P2PMessenger) {
-    println!(
-        "{:?}: ---init---- initiating handshake protocol",
-        local_peer
-    );
-    let local_iv = generate_rand_iv();
-    let msg = PeerHandshake::Request(ProofOfPossessionRequest {
-        iv: local_iv,
-        peer: local_peer.clone(),
-    });
-
-    let response: PeerHandshake = messanger
-        .send_receive(msg.try_into().unwrap())
-        .await
-        .unwrap()
-        .try_into()
-        .unwrap();
-    println!(
-        "{:?}: ---init---- handshake 1st response received",
-        local_peer
-    );
-
-    let (remote_peer, remote_iv) = match response {
-        PeerHandshake::Response(proof) => {
-            if !proof.verify_incomming(&local_peer, local_iv) {
-                println!(
-                    "{:?}: ---init---- Handshake: verification failure",
-                    local_peer
-                );
-                return;
-            }
-            (proof.sender, proof.sender_iv)
-        }
-        _ => {
-            println!("{:?}: ---init---- Handshake: invalid state", local_peer);
-            return;
-        }
-    };
-    println!(
-        "{:?}: ---init---- handshake 1st response verified from {:?}",
-        local_peer, remote_peer
-    );
-
-    let req = ProofOfPossessionRequest {
-        iv: remote_iv,
-        peer: remote_peer.clone(),
-    };
-    let msg = PeerHandshake::from_request(req, local_peer.clone(), local_iv);
-    let _ = messanger.send(msg.try_into().unwrap()).await;
-    println!("{:?}: ---init---- handshake 2nd response sent", local_peer);
+pub struct HandshakeProtocol {
+    local_peer: Peer,
 }
 
-pub async fn accept_protocol(local_peer: Peer, mut messanger: impl P2PMessenger) {
-    // read request
-    let request: PeerHandshake = messanger.recieve().await.unwrap().try_into().unwrap();
-    let local_iv = generate_rand_iv();
-    println!("{:?}: ---acc---- handshake request received", local_peer);
+impl From<Peer> for HandshakeProtocol {
+    fn from(local_peer: Peer) -> Self {
+        Self { local_peer }
+    }
+}
 
-    // send response
-    let response: PeerHandshake = match request {
-        PeerHandshake::Request(req) => {
-            let response = PeerHandshake::from_request(req, local_peer.clone(), local_iv);
-            messanger
-                .send_receive(response.try_into().unwrap())
-                .await
-                .unwrap()
-                .try_into()
-                .unwrap()
-        }
-        _ => {
-            println!("{:?}: ---acc--- Handshake: invalid state ", local_peer);
-            return;
-        }
-    };
-    println!("{:?}: ---acc---- handshake response received", local_peer);
-    match response {
-        PeerHandshake::Response(proof) => {
-            if !proof.verify_incomming(&local_peer, local_iv) {
+impl TwoPartyExchange for HandshakeProtocol {
+    async fn initiate(self, mut messanger: impl P2PMessenger) {
+        println!(
+            "{:?}: ---init---- initiating handshake protocol",
+            self.local_peer
+        );
+        let local_iv = generate_rand_iv();
+        let msg = PeerHandshake::Request(ProofOfPossessionRequest {
+            iv: local_iv,
+            peer: self.local_peer.clone(),
+        });
+
+        let response: PeerHandshake = messanger
+            .send_receive(msg.try_into().unwrap())
+            .await
+            .unwrap()
+            .try_into()
+            .unwrap();
+        println!(
+            "{:?}: ---init---- handshake 1st response received",
+            self.local_peer
+        );
+
+        let (remote_peer, remote_iv) = match response {
+            PeerHandshake::Response(proof) => {
+                if !proof.verify_incomming(&self.local_peer, local_iv) {
+                    println!(
+                        "{:?}: ---init---- Handshake: verification failure",
+                        self.local_peer
+                    );
+                    return;
+                }
+                (proof.sender, proof.sender_iv)
+            }
+            _ => {
                 println!(
-                    "{:?}: ---acc--- Handshake: verification failure",
-                    local_peer
+                    "{:?}: ---init---- Handshake: invalid state",
+                    self.local_peer
                 );
                 return;
             }
-        }
-        _ => {
-            println!("{:?}: ---acc--- Handshake: invalid state ", local_peer);
-            return;
-        }
-    };
-    println!(
-        "{:?}: ---acc---- handshake 2nd response verified",
-        local_peer
-    );
+        };
+        println!(
+            "{:?}: ---init---- handshake 1st response verified from {:?}",
+            self.local_peer, remote_peer
+        );
+
+        let req = ProofOfPossessionRequest {
+            iv: remote_iv,
+            peer: remote_peer.clone(),
+        };
+        let msg = PeerHandshake::from_request(req, self.local_peer.clone(), local_iv);
+        let _ = messanger.send(msg.try_into().unwrap()).await;
+        println!(
+            "{:?}: ---init---- handshake 2nd response sent",
+            self.local_peer
+        );
+    }
+
+    async fn accept(self, mut messanger: impl P2PMessenger) {
+        // read request
+        let request: PeerHandshake = messanger.recieve().await.unwrap().try_into().unwrap();
+        let local_iv = generate_rand_iv();
+        println!(
+            "{:?}: ---acc---- handshake request received",
+            self.local_peer
+        );
+
+        // send response
+        let response: PeerHandshake = match request {
+            PeerHandshake::Request(req) => {
+                let response = PeerHandshake::from_request(req, self.local_peer.clone(), local_iv);
+                messanger
+                    .send_receive(response.try_into().unwrap())
+                    .await
+                    .unwrap()
+                    .try_into()
+                    .unwrap()
+            }
+            _ => {
+                println!("{:?}: ---acc--- Handshake: invalid state ", self.local_peer);
+                return;
+            }
+        };
+        println!(
+            "{:?}: ---acc---- handshake response received",
+            self.local_peer
+        );
+        match response {
+            PeerHandshake::Response(proof) => {
+                if !proof.verify_incomming(&self.local_peer, local_iv) {
+                    println!(
+                        "{:?}: ---acc--- Handshake: verification failure",
+                        self.local_peer
+                    );
+                    return;
+                }
+            }
+            _ => {
+                println!("{:?}: ---acc--- Handshake: invalid state ", self.local_peer);
+                return;
+            }
+        };
+        println!(
+            "{:?}: ---acc---- handshake 2nd response verified",
+            self.local_peer
+        );
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
