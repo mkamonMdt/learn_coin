@@ -16,7 +16,7 @@ pub async fn start_listener(
     loop {
         let (stream, _) = listener.accept().await.unwrap();
         let connected_peers = connected_peers.clone();
-        let connection = P2PConnection::new(stream).await;
+        let connection = P2PConnection::new(stream, event_sender.clone()).await;
         let id = connection.get_id();
 
         {

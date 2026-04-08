@@ -2,9 +2,10 @@ use std::collections::HashMap;
 
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use crate::comm::events::{NetworkMessage, ProtocolId};
+use crate::comm::events::{NetworkMessage, NodeEvent, ProtocolId};
 use crate::comm::{P2PMessenger, P2PReceiver, P2PSender};
 
 enum ProtocolCmd {
@@ -54,21 +55,23 @@ pub struct P2PConnection {
     id: Uuid,
     outgoing_tx: mpsc::Sender<NetworkMessage>,
     register_tx: mpsc::Sender<ProtocolCmd>,
-    _deamon_handle: tokio::task::JoinHandle<()>,
+    _deamon_handle: JoinHandle<()>,
 }
 
 impl P2PConnection {
-    pub async fn new(stream: TcpStream) -> Self {
+    pub async fn new(stream: TcpStream, event_tx: mpsc::Sender<NodeEvent>) -> Self {
         let (outgoing_tx, outgoing_rx) = mpsc::channel::<NetworkMessage>(10);
         let (register_tx, register_rx) = mpsc::channel::<ProtocolCmd>(10);
 
-        let handle = tokio::spawn(backend_deamon(stream, outgoing_rx, register_rx));
+        let id = Uuid::new_v4();
+        let daemon_handle = tokio::spawn(backend_deamon(stream, outgoing_rx, register_rx));
+        let monitor_handle = Self::spawn_monitor(daemon_handle, id, event_tx);
 
         Self {
-            id: Uuid::new_v4(),
+            id,
             outgoing_tx,
             register_tx,
-            _deamon_handle: handle,
+            _deamon_handle: monitor_handle,
         }
     }
 
@@ -81,6 +84,17 @@ impl P2PConnection {
             outgoing_tx: self.outgoing_tx.clone(),
             register_tx: self.register_tx.clone(),
         }
+    }
+
+    fn spawn_monitor(
+        handle: JoinHandle<()>,
+        id: Uuid,
+        event_tx: mpsc::Sender<NodeEvent>,
+    ) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            let _ = handle.await;
+            let _ = event_tx.send(NodeEvent::PeerDisconnected(id)).await;
+        })
     }
 }
 
@@ -115,9 +129,14 @@ async fn backend_deamon(
             Some(payload) = outgoing_rx.recv() => {
                 let _ = writer.send(payload).await;
             }
-            Ok(incomming) = reader.recieve()=> {
-                if let Some(tx) = protocol_registry.get(&incomming.protocol_id) {
-                    let _ = tx.send(incomming).await;
+            incomming = reader.recieve() => {
+                match incomming {
+                    Ok(incomming) => {
+                        if let Some(tx) = protocol_registry.get(&incomming.protocol_id) {
+                            let _ = tx.send(incomming).await;
+                        }
+                    }
+                    Err(_) => break
                 }
             }
             Some(cmd) = register_rx.recv() => {

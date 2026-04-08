@@ -39,7 +39,7 @@ impl Node {
 
     pub async fn bootstrap(&self, peer_addr: String) -> Option<Uuid> {
         println!("Connecting to {}", peer_addr);
-        match peer::connect_to_peer(peer_addr.clone()).await {
+        match peer::connect_to_peer(peer_addr.clone(), self.event_sender.clone()).await {
             Ok(connection) => {
                 let mut pending = self
                     .connected_peers

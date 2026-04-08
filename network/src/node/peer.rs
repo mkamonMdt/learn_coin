@@ -1,7 +1,8 @@
-use crate::comm::p2p_connection::P2PConnection;
+use crate::comm::{events::NodeEvent, p2p_connection::P2PConnection};
 use crate::NetworkError;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -15,10 +16,13 @@ impl Peer {
     }
 }
 
-pub async fn connect_to_peer(addr: String) -> Result<P2PConnection, NetworkError> {
+pub async fn connect_to_peer(
+    addr: String,
+    event_tx: mpsc::Sender<NodeEvent>,
+) -> Result<P2PConnection, NetworkError> {
     match TcpStream::connect(addr.clone()).await {
         Ok(stream) => {
-            let connection = P2PConnection::new(stream).await;
+            let connection = P2PConnection::new(stream, event_tx).await;
             Ok(connection)
         }
         Err(e) => Err(NetworkError::PeerFailure(

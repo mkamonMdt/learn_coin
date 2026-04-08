@@ -1,8 +1,8 @@
 use crate::protocols::TwoPartyExchange;
-use network::comm::events::{NetworkMessage, ProtocolId};
-use network::comm::P2PMessenger;
-use network::node::peer::Peer;
 use network::NetworkError;
+use network::comm::P2PMessenger;
+use network::comm::events::{NetworkMessage, ProtocolId};
+use network::node::peer::Peer;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

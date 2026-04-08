@@ -62,7 +62,7 @@ async fn handle_network_event(local_peer: Peer, node: Arc<Node>, event: NodeEven
                 .accept(protocol_handle)
                 .await;
         }
-        NodeEvent::PeerDisconnected(_uuid) => todo!(),
+        NodeEvent::PeerDisconnected(uuid) => println!("Peer disconnected {}", uuid),
         NodeEvent::NetworkMessage(_network_message) => todo!(),
     }
 }
