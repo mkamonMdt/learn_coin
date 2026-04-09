@@ -5,12 +5,12 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use crate::comm::events::{NetworkMessage, NodeEvent, ProtocolId};
+use crate::comm::events::{NetworkMessage, NodeEvent};
 use crate::comm::{P2PMessenger, P2PReceiver, P2PSender};
 
 enum ProtocolCmd {
-    Open(ProtocolId, mpsc::Sender<NetworkMessage>),
-    Close(ProtocolId),
+    Open(u16, mpsc::Sender<NetworkMessage>),
+    Close(u16),
 }
 
 #[derive(Clone)]
@@ -23,7 +23,7 @@ pub struct ProtocolHandle {
     outgoing_tx: mpsc::Sender<NetworkMessage>,
     incomming_rx: mpsc::Receiver<NetworkMessage>,
     register_tx: mpsc::Sender<ProtocolCmd>,
-    protocol_id: ProtocolId,
+    protocol_id: u16,
 }
 
 impl P2PSender for ProtocolHandle {
@@ -99,7 +99,7 @@ impl P2PConnection {
 }
 
 impl UnintiProtocolHandle {
-    pub async fn open_protocol(self, protocol_id: ProtocolId) -> ProtocolHandle {
+    pub async fn open_protocol(self, protocol_id: u16) -> ProtocolHandle {
         let (incomming_tx, incomming_rx) = mpsc::channel::<NetworkMessage>(10);
 
         //TODO: Error handling
@@ -122,7 +122,7 @@ async fn backend_deamon(
     mut outgoing_rx: mpsc::Receiver<NetworkMessage>,
     mut register_rx: mpsc::Receiver<ProtocolCmd>,
 ) {
-    let mut protocol_registry: HashMap<ProtocolId, mpsc::Sender<NetworkMessage>> = HashMap::new();
+    let mut protocol_registry: HashMap<u16, mpsc::Sender<NetworkMessage>> = HashMap::new();
     let (mut reader, mut writer) = stream.into_split();
     loop {
         tokio::select! {

@@ -1,7 +1,7 @@
-use crate::protocols::TwoPartyExchange;
+use crate::protocols::{ProtocolId, TwoPartyExchange};
 use network::NetworkError;
 use network::comm::P2PMessenger;
-use network::comm::events::{NetworkMessage, ProtocolId};
+use network::comm::events::NetworkMessage;
 use network::node::peer::Peer;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,15 @@ use uuid::Uuid;
 
 pub struct HandshakeProtocol {
     local_peer: Peer,
+}
+
+impl ProtocolId for HandshakeProtocol {
+    const PREFIX: u8 = 1;
+
+    /// Only single HandshakeProtocol per peer supported
+    fn value(&self) -> u8 {
+        1
+    }
 }
 
 impl From<Peer> for HandshakeProtocol {
@@ -30,12 +39,13 @@ impl TwoPartyExchange for HandshakeProtocol {
             peer: self.local_peer.clone(),
         });
 
-        let response: PeerHandshake = messanger
-            .send_receive(msg.try_into().unwrap())
-            .await
-            .unwrap()
-            .try_into()
-            .unwrap();
+        let response = PeerHandshake::try_from(
+            messanger
+                .send_receive(msg.try_into(self.to_u16()).unwrap())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         println!(
             "{:?}: ---init---- handshake 1st response received",
             self.local_peer
@@ -70,7 +80,7 @@ impl TwoPartyExchange for HandshakeProtocol {
             peer: remote_peer.clone(),
         };
         let msg = PeerHandshake::from_request(req, self.local_peer.clone(), local_iv);
-        let _ = messanger.send(msg.try_into().unwrap()).await;
+        let _ = messanger.send(msg.try_into(self.to_u16()).unwrap()).await;
         println!(
             "{:?}: ---init---- handshake 2nd response sent",
             self.local_peer
@@ -79,7 +89,7 @@ impl TwoPartyExchange for HandshakeProtocol {
 
     async fn accept(self, mut messanger: impl P2PMessenger) {
         // read request
-        let request: PeerHandshake = messanger.recieve().await.unwrap().try_into().unwrap();
+        let request = PeerHandshake::try_from(messanger.recieve().await.unwrap()).unwrap();
         let local_iv = generate_rand_iv();
         println!(
             "{:?}: ---acc---- handshake request received",
@@ -87,15 +97,16 @@ impl TwoPartyExchange for HandshakeProtocol {
         );
 
         // send response
-        let response: PeerHandshake = match request {
+        let response = match request {
             PeerHandshake::Request(req) => {
                 let response = PeerHandshake::from_request(req, self.local_peer.clone(), local_iv);
-                messanger
-                    .send_receive(response.try_into().unwrap())
-                    .await
-                    .unwrap()
-                    .try_into()
-                    .unwrap()
+                PeerHandshake::try_from(
+                    messanger
+                        .send_receive(response.try_into(self.to_u16()).unwrap())
+                        .await
+                        .unwrap(),
+                )
+                .unwrap()
             }
             _ => {
                 println!("{:?}: ---acc--- Handshake: invalid state ", self.local_peer);
@@ -134,10 +145,8 @@ pub enum PeerHandshake {
     Response(ProofOfPossessionResponse),
 }
 
-impl TryInto<NetworkMessage> for PeerHandshake {
-    type Error = NetworkError;
-
-    fn try_into(self) -> Result<NetworkMessage, Self::Error> {
+impl PeerHandshake {
+    fn try_into(self, protocol_id: u16) -> Result<NetworkMessage, NetworkError> {
         //TODO: solve id problem
         let peer_id = Uuid::new_v4();
         let message = bincode::serialize(&self).map_err(|e| {
@@ -146,25 +155,15 @@ impl TryInto<NetworkMessage> for PeerHandshake {
 
         Ok(NetworkMessage {
             peer_id,
-            protocol_id: ProtocolId::V0(network::comm::events::AlfaProtocols::Handshake),
+            protocol_id,
             message,
         })
     }
-}
 
-impl TryFrom<NetworkMessage> for PeerHandshake {
-    type Error = NetworkError;
-
-    fn try_from(value: NetworkMessage) -> Result<Self, Self::Error> {
-        if let ProtocolId::V0(network::comm::events::AlfaProtocols::Handshake) = value.protocol_id {
-            Ok(bincode::deserialize(&value.message).map_err(|e| {
-                NetworkError::PeerFailure(format!("Handshake: Could not deserialize:{}", e))
-            })?)
-        } else {
-            Err(NetworkError::PeerFailure(
-                "Handshake: invalid msg received".to_string(),
-            ))
-        }
+    fn try_from(value: NetworkMessage) -> Result<Self, NetworkError> {
+        bincode::deserialize(&value.message).map_err(|e| {
+            NetworkError::PeerFailure(format!("Handshake: Could not deserialize:{}", e))
+        })
     }
 }
 

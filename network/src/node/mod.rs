@@ -2,7 +2,6 @@ pub mod listener;
 pub mod peer;
 
 use crate::comm::events::NodeEvent;
-use crate::comm::events::ProtocolId;
 use crate::comm::p2p_connection::P2PConnection;
 use crate::comm::p2p_connection::ProtocolHandle;
 use crate::NetworkError;
@@ -57,7 +56,7 @@ impl Node {
     pub async fn open_protocol(
         &self,
         peer: Uuid,
-        protocol_id: ProtocolId,
+        protocol_id: u16,
     ) -> Result<ProtocolHandle, NetworkError> {
         let handle = {
             let connected_peers = self

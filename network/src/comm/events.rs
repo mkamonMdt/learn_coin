@@ -1,17 +1,6 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, Hash, PartialEq)]
-pub enum AlfaProtocols {
-    Handshake,
-    Unknown,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, Hash, PartialEq)]
-pub enum ProtocolId {
-    V0(AlfaProtocols),
-}
-
 pub enum NodeEvent {
     PeerConnected(Uuid),
     PeerDisconnected(Uuid),
@@ -21,6 +10,6 @@ pub enum NodeEvent {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NetworkMessage {
     pub peer_id: Uuid,
-    pub protocol_id: ProtocolId,
+    pub protocol_id: u16,
     pub message: Vec<u8>,
 }

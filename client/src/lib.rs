@@ -1,10 +1,9 @@
 mod protocols;
 
+use crate::protocols::ProtocolId;
 use crate::protocols::TwoPartyExchange;
 use crate::protocols::peer_handshake::HandshakeProtocol;
-use network::comm::events::AlfaProtocols;
 use network::comm::events::NodeEvent;
-use network::comm::events::ProtocolId;
 use network::node::Node;
 use network::node::peer::Peer;
 use std::sync::Arc;
@@ -19,16 +18,11 @@ pub async fn run_clinet(local_addr: String, bootstrap: Option<String>) {
     if let Some(peer_addr) = bootstrap
         && let Some(peer) = node.bootstrap(peer_addr).await
     {
-        let local_peer = local_peer.clone();
-        let protocol_handle = node
-            .open_protocol(peer, ProtocolId::V0(AlfaProtocols::Handshake))
-            .await
-            .unwrap();
+        let protocol = HandshakeProtocol::from(local_peer.clone());
+        let protocol_handle = node.open_protocol(peer, protocol.to_u16()).await.unwrap();
 
         tokio::spawn(async move {
-            HandshakeProtocol::from(local_peer)
-                .initiate(protocol_handle)
-                .await;
+            protocol.initiate(protocol_handle).await;
         });
     }
 
@@ -54,13 +48,9 @@ pub async fn run_clinet(local_addr: String, bootstrap: Option<String>) {
 async fn handle_network_event(local_peer: Peer, node: Arc<Node>, event: NodeEvent) {
     match event {
         NodeEvent::PeerConnected(uuid) => {
-            let protocol_handle = node
-                .open_protocol(uuid, ProtocolId::V0(AlfaProtocols::Handshake))
-                .await
-                .unwrap();
-            HandshakeProtocol::from(local_peer)
-                .accept(protocol_handle)
-                .await;
+            let protocol = HandshakeProtocol::from(local_peer);
+            let protocol_handle = node.open_protocol(uuid, protocol.to_u16()).await.unwrap();
+            protocol.accept(protocol_handle).await;
         }
         NodeEvent::PeerDisconnected(uuid) => println!("Peer disconnected {}", uuid),
         NodeEvent::NetworkMessage(_network_message) => todo!(),
