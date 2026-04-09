@@ -135,6 +135,9 @@ async fn backend_deamon(
                         if let Some(tx) = protocol_registry.get(&incomming.protocol_id) {
                             let _ = tx.send(incomming).await;
                         }
+                        else {
+                            println!("TODO: unhandled bug that appears randomly")
+                        }
                     }
                     Err(_) => break
                 }
