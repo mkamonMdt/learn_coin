@@ -22,7 +22,9 @@ pub async fn run_clinet(local_addr: String, bootstrap: Option<String>) {
         let protocol_handle = node.open_protocol(peer, protocol.to_u16()).await.unwrap();
 
         tokio::spawn(async move {
-            protocol.initiate(protocol_handle).await;
+            if let Err(e) = protocol.initiate(protocol_handle).await {
+                println!("---init--- {e}")
+            }
         });
     }
 
@@ -50,7 +52,9 @@ async fn handle_network_event(local_peer: Peer, node: Arc<Node>, event: NodeEven
         NodeEvent::PeerConnected(uuid) => {
             let protocol = HandshakeProtocol::from(local_peer);
             let protocol_handle = node.open_protocol(uuid, protocol.to_u16()).await.unwrap();
-            protocol.accept(protocol_handle).await;
+            if let Err(e) = protocol.accept(protocol_handle).await {
+                println!("---acc--- {e}");
+            }
         }
         NodeEvent::PeerDisconnected(uuid) => println!("Peer disconnected {}", uuid),
         NodeEvent::NetworkMessage(_network_message) => todo!(),

@@ -1,7 +1,6 @@
-use crate::protocols::{ProtocolId, TwoPartyExchange};
-use network::NetworkError;
-use network::comm::P2PMessenger;
+use crate::protocols::{ProtocolError, ProtocolId, TwoPartyExchange};
 use network::comm::events::NetworkMessage;
+use network::comm::P2PMessenger;
 use network::node::peer::Peer;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -28,7 +27,7 @@ impl From<Peer> for HandshakeProtocol {
 }
 
 impl TwoPartyExchange for HandshakeProtocol {
-    async fn initiate(self, mut messanger: impl P2PMessenger) {
+    async fn initiate(self, mut messanger: impl P2PMessenger) -> Result<(), ProtocolError> {
         println!(
             "{:?}: ---init---- initiating handshake protocol",
             self.local_peer
@@ -44,8 +43,7 @@ impl TwoPartyExchange for HandshakeProtocol {
                 .send_receive(msg.try_into(self.to_u16()).unwrap())
                 .await
                 .unwrap(),
-        )
-        .unwrap();
+        )?;
         println!(
             "{:?}: ---init---- handshake 1st response received",
             self.local_peer
@@ -54,20 +52,18 @@ impl TwoPartyExchange for HandshakeProtocol {
         let (remote_peer, remote_iv) = match response {
             PeerHandshake::Response(proof) => {
                 if !proof.verify_incomming(&self.local_peer, local_iv) {
-                    println!(
-                        "{:?}: ---init---- Handshake: verification failure",
-                        self.local_peer
-                    );
-                    return;
+                    return Err(ProtocolError::ProtocolStep {
+                        protocol: "Handshake".into(),
+                        msg: "responder signature verification failed".into(),
+                    });
                 }
                 (proof.sender, proof.sender_iv)
             }
             _ => {
-                println!(
-                    "{:?}: ---init---- Handshake: invalid state",
-                    self.local_peer
-                );
-                return;
+                return Err(ProtocolError::ProtocolStep {
+                    protocol: "Handshake".into(),
+                    msg: "invalid protocol state".into(),
+                });
             }
         };
         println!(
@@ -85,9 +81,10 @@ impl TwoPartyExchange for HandshakeProtocol {
             "{:?}: ---init---- handshake 2nd response sent",
             self.local_peer
         );
+        Ok(())
     }
 
-    async fn accept(self, mut messanger: impl P2PMessenger) {
+    async fn accept(self, mut messanger: impl P2PMessenger) -> Result<(), ProtocolError> {
         // read request
         let request = PeerHandshake::try_from(messanger.recieve().await.unwrap()).unwrap();
         let local_iv = generate_rand_iv();
@@ -105,12 +102,13 @@ impl TwoPartyExchange for HandshakeProtocol {
                         .send_receive(response.try_into(self.to_u16()).unwrap())
                         .await
                         .unwrap(),
-                )
-                .unwrap()
+                )?
             }
             _ => {
-                println!("{:?}: ---acc--- Handshake: invalid state ", self.local_peer);
-                return;
+                return Err(ProtocolError::ProtocolStep {
+                    protocol: "Handshake".into(),
+                    msg: "invalid protocol state".into(),
+                });
             }
         };
         println!(
@@ -120,22 +118,24 @@ impl TwoPartyExchange for HandshakeProtocol {
         match response {
             PeerHandshake::Response(proof) => {
                 if !proof.verify_incomming(&self.local_peer, local_iv) {
-                    println!(
-                        "{:?}: ---acc--- Handshake: verification failure",
-                        self.local_peer
-                    );
-                    return;
+                    return Err(ProtocolError::ProtocolStep {
+                        protocol: "Handshake".into(),
+                        msg: "initiator signature verification failure".into(),
+                    });
                 }
             }
             _ => {
-                println!("{:?}: ---acc--- Handshake: invalid state ", self.local_peer);
-                return;
+                return Err(ProtocolError::ProtocolStep {
+                    protocol: "Handshake".into(),
+                    msg: "invalid protocol state 2".into(),
+                });
             }
         };
         println!(
             "{:?}: ---acc---- handshake 2nd response verified",
             self.local_peer
         );
+        Ok(())
     }
 }
 
@@ -146,11 +146,11 @@ pub enum PeerHandshake {
 }
 
 impl PeerHandshake {
-    fn try_into(self, protocol_id: u16) -> Result<NetworkMessage, NetworkError> {
+    fn try_into(self, protocol_id: u16) -> Result<NetworkMessage, ProtocolError> {
         //TODO: solve id problem
         let peer_id = Uuid::new_v4();
         let message = bincode::serialize(&self).map_err(|e| {
-            NetworkError::PeerFailure(format!("Handshake: serialization failure:{}", e))
+            ProtocolError::Encoding(format!("Handshake: serialization failure:{}", e))
         })?;
 
         Ok(NetworkMessage {
@@ -160,10 +160,9 @@ impl PeerHandshake {
         })
     }
 
-    fn try_from(value: NetworkMessage) -> Result<Self, NetworkError> {
-        bincode::deserialize(&value.message).map_err(|e| {
-            NetworkError::PeerFailure(format!("Handshake: Could not deserialize:{}", e))
-        })
+    fn try_from(value: NetworkMessage) -> Result<Self, ProtocolError> {
+        bincode::deserialize(&value.message)
+            .map_err(|e| ProtocolError::Decoding(format!("Handshake: Could not deserialize:{}", e)))
     }
 }
 
