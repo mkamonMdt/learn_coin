@@ -1,5 +1,7 @@
+pub mod client_control;
 mod protocols;
 
+use crate::client_control::CtrlCommand;
 use crate::protocols::ProtocolId;
 use crate::protocols::TwoPartyExchange;
 use crate::protocols::peer_handshake::HandshakeProtocol;
@@ -10,16 +12,54 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-pub async fn run_clinet(local_addr: String, bootstrap: Option<String>) {
-    let (tx, mut rx) = mpsc::channel::<NodeEvent>(10);
+#[derive(Clone)]
+pub(crate) struct Client {
+    node: Arc<Node>,
+    local_peer: Peer,
+}
 
-    let node = Arc::new(Node::new(local_addr, tx).await);
-    let local_peer = Peer { id: Uuid::new_v4() };
-    if let Some(peer_addr) = bootstrap
-        && let Some(peer) = node.bootstrap(peer_addr).await
-    {
-        let protocol = HandshakeProtocol::from(local_peer.clone());
-        let protocol_handle = node.open_protocol(peer, protocol.to_u16()).await.unwrap();
+impl Client {
+    fn from(node: Node) -> Self {
+        let local_peer = Peer { id: Uuid::new_v4() };
+        let node = Arc::new(node);
+        println!("{:?} ---client--- running", local_peer);
+        Self { node, local_peer }
+    }
+}
+
+pub async fn run_clinet(local_addr: String, mut ctrl_rx: mpsc::Receiver<CtrlCommand>) {
+    let (tx, mut rx) = mpsc::channel::<NodeEvent>(10);
+    let node = Node::new(local_addr, tx).await;
+    let client = Client::from(node);
+
+    loop {
+        tokio::select! {
+            Some(network_event) = rx.recv() => {
+                let client = client.clone();
+                tokio::spawn(async move{
+                    handle_network_event(client, network_event).await;
+                });
+            }
+            Some(ctrl_event) = ctrl_rx.recv() => {
+                let client = client.clone();
+                tokio::spawn(async move{
+                    match ctrl_event {
+                        CtrlCommand::InitiateConnection(addr) => connect_peer(client, addr).await,
+                    }
+                });
+            }
+        }
+    }
+}
+
+async fn connect_peer(client: Client, peer_addr: String) {
+    if let Some(peer) = client.node.bootstrap(peer_addr.clone()).await {
+        let protocol = HandshakeProtocol::from(client.local_peer);
+        let protocol_handle = client
+            .node
+            .open_protocol(peer, protocol.to_u16())
+            .await
+            .unwrap();
 
         tokio::spawn(async move {
             if let Err(e) = protocol.initiate(protocol_handle).await {
@@ -27,31 +67,17 @@ pub async fn run_clinet(local_addr: String, bootstrap: Option<String>) {
             }
         });
     }
-
-    println!("{:?} ---client--- running", local_peer);
-
-    loop {
-        tokio::select! {
-            Some(event) = rx.recv()=>
-            {
-
-                let local_peer = local_peer.clone();
-                let node = node.clone();
-                tokio::spawn(async move{
-                    handle_network_event(local_peer ,node, event).await;
-                });
-            }
-
-
-        }
-    }
 }
 
-async fn handle_network_event(local_peer: Peer, node: Arc<Node>, event: NodeEvent) {
+async fn handle_network_event(client: Client, event: NodeEvent) {
     match event {
         NodeEvent::PeerConnected(uuid) => {
-            let protocol = HandshakeProtocol::from(local_peer);
-            let protocol_handle = node.open_protocol(uuid, protocol.to_u16()).await.unwrap();
+            let protocol = HandshakeProtocol::from(client.local_peer);
+            let protocol_handle = client
+                .node
+                .open_protocol(uuid, protocol.to_u16())
+                .await
+                .unwrap();
             if let Err(e) = protocol.accept(protocol_handle).await {
                 println!("---acc--- {e}");
             }

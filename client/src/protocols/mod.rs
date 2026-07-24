@@ -1,5 +1,5 @@
-use network::comm::P2PMessenger;
 use network::NetworkError;
+use network::comm::P2PMessenger;
 use thiserror::Error;
 
 pub mod peer_handshake;
