@@ -1,13 +1,14 @@
+pub mod cli;
 pub mod client_control;
 mod protocols;
 
 use crate::client_control::CtrlCommand;
+use crate::protocols::peer_handshake::HandshakeProtocol;
 use crate::protocols::ProtocolId;
 use crate::protocols::TwoPartyExchange;
-use crate::protocols::peer_handshake::HandshakeProtocol;
 use network::comm::events::NodeEvent;
-use network::node::Node;
 use network::node::peer::Peer;
+use network::node::Node;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
