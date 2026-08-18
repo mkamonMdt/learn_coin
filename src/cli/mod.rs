@@ -2,7 +2,7 @@ use std::io::{self, BufRead};
 
 use tokio::sync::mpsc;
 
-use crate::client_control::CtrlCommand;
+use client::client_control::CtrlCommand;
 
 pub fn run_cli(client_ctrl_tx: mpsc::Sender<CtrlCommand>) {
     let stdin = io::stdin();

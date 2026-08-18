@@ -1,5 +1,4 @@
 use clap::Parser;
-use client::cli::run_cli;
 use client::client_control::CtrlCommand;
 use client::run_clinet;
 use tokio::sync::mpsc;
@@ -26,6 +25,4 @@ async fn main() {
     if let Some(peer_addr) = args.connect_to {
         let _ = tx.send(CtrlCommand::InitiateConnection(peer_addr)).await;
     }
-
-    run_cli(tx);
 }
