@@ -1,4 +1,4 @@
-use crate::static_config;
+use crate::config::static_config;
 
 pub fn get_epoch(block_height: usize) -> usize {
     block_height / static_config::EPOCH_HEIGHT

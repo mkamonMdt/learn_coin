@@ -11,6 +11,7 @@ fn panic(_: &PanicInfo) -> ! {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn execute(blockchain_ptr_low: i32, blockchain_ptr_high: i32) -> i32 {
     // External functions provided by LearnCoin (to be defined)
+    #[link(wasm_import_module = "env")]
     unsafe extern "C" {
         fn get_balance(
             blockchain_ptr_low: i32,
