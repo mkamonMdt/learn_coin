@@ -1,6 +1,7 @@
 pub mod bchain_error;
 pub mod message;
 pub mod primitives;
+pub mod service;
 
 mod blockchain;
 mod chain;
