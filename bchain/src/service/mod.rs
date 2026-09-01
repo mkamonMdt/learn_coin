@@ -22,8 +22,41 @@ pub struct BlockchainService {
 }
 
 impl BlockchainService {
-    fn start(&self) -> ServiceHandles {
-        todo!();
+    fn start(blockchain: Blockchain) -> ServiceHandles {
+        // check if blockchain is at genesis
+        let (cmd_tx, cmd_rx) = mpsc::channel(16);
+        let (network_tx, network_rx) = mpsc::channel(128);
+        let (event_tx, _) = broadcast::channel(128);
+
+        let mut x = Self {
+            state: blockchain,
+            cmd_rx,
+            network_rx,
+            event_tx: event_tx.clone(),
+        };
+
+        tokio::spawn(async move {
+            x.start_listener().await;
+        });
+
+        ServiceHandles {
+            cmd_tx,
+            network_tx,
+            event_tx,
+        }
+    }
+
+    async fn start_listener(&mut self) {
+        loop {
+            tokio::select! {
+                Some(_cmd) = self.cmd_rx.recv() => {
+                    todo!()
+                }
+                Some(_msg) = self.network_rx.recv() => {
+                    todo!()
+                }
+            }
+        }
     }
 }
 
