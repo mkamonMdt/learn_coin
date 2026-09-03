@@ -1,9 +1,6 @@
-use crate::bchain_error::BChainError;
+use crate::bchain_error::{BChainError, BChainResult};
 use crate::chain::Chain;
 use crate::config::{config_utils, static_config};
-use crate::message::BlockchainFacade;
-use crate::message::Message;
-use crate::message::MessageType;
 use crate::patricia_merkle_trie::state_root;
 use crate::primitives::*;
 use crate::validators::TwoEpochValidators;
@@ -21,30 +18,6 @@ pub struct Blockchain {
     validators: TwoEpochValidators,
 }
 
-impl BlockchainFacade for Blockchain {
-    fn receive(&mut self, msg: Message) -> Result<(), BChainError> {
-        match msg.msg_type {
-            MessageType::ProduceBlock(producer, transactions) => {
-                self.add_block(transactions).map_err(|msg| -> BChainError {
-                    BChainError::BlockProductionFailure(producer, msg)
-                })?
-            }
-            MessageType::IncommingBlock(_block) => todo!(),
-            MessageType::GetHeaders => todo!(),
-            MessageType::Headers(_blocks) => todo!(),
-        }
-
-        Ok(())
-    }
-
-    fn get_wallet(&self, user: &str) -> Result<&Wallet, BChainError> {
-        self.wallets
-            .wallets
-            .get(user)
-            .ok_or(BChainError::UserNotFound(user.to_string()))
-    }
-}
-
 impl Blockchain {
     pub fn new() -> Self {
         let mut wallets = Wallets::default();
@@ -59,6 +32,15 @@ impl Blockchain {
             contract_storage: HashMap::new(),
             validators: TwoEpochValidators::new(static_config::EPOCH_HEIGHT),
         }
+    }
+
+    //TODO: consider some lightweight Wallet view
+    pub fn get_wallet(&self, user: &str) -> BChainResult<Wallet> {
+        self.wallets
+            .wallets
+            .get(user)
+            .cloned()
+            .ok_or_else(|| BChainError::UserNotFound(user.to_string()))
     }
 
     fn get_epoch_seed(&self, epoch: usize) -> String {
@@ -120,7 +102,7 @@ impl Blockchain {
         self.add_block(block.transactions)
     }
 
-    fn add_block(&mut self, transactions: Vec<Transaction>) -> Result<(), String> {
+    pub(crate) fn add_block(&mut self, transactions: Vec<Transaction>) -> Result<(), String> {
         let block_height = self.chain.len();
         let slot_in_epoch = block_height % static_config::EPOCH_HEIGHT;
         let validator = self

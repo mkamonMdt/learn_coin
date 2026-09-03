@@ -35,20 +35,20 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use bchain::{
-        message::BlockchainFacade,
         primitives::{Transaction, TransactionType, Wallet},
-        Blockchain, GENESIS,
+        service::{BlockchainService, CommandHandle},
+        GENESIS,
     };
+    use tokio::sync::oneshot;
 
-    fn produce_block_with_single_tx<T: BlockchainFacade>(blockchain: &mut T, tx: Transaction) {
-        let res = blockchain.receive(bchain::message::Message {
-            msg_type: bchain::message::MessageType::ProduceBlock(GENESIS.to_owned(), vec![tx]),
-        });
-
+    async fn produce_block_with_single_tx(blockchain_handle: &CommandHandle, tx: Transaction) {
+        let res = blockchain_handle
+            .produce_block(GENESIS.to_owned(), vec![tx])
+            .await;
         assert!(res.is_ok());
     }
 
-    fn insert_wallet<T: BlockchainFacade>(blockchain: &mut T, user: &str, amount: f64) {
+    async fn insert_wallet(blockchain_handle: &CommandHandle, user: &str, amount: f64) {
         let tx = Transaction::new(
             GENESIS.to_owned(),
             TransactionType::Transfer {
@@ -58,14 +58,27 @@ mod tests {
             },
             0.,
         );
-        produce_block_with_single_tx(blockchain, tx);
+        produce_block_with_single_tx(blockchain_handle, tx).await;
     }
 
-    #[test]
-    fn test_wasm_simple_contract() {
-        let mut blockchain = Blockchain::new();
+    async fn get_wallet(blockchain_handle: &CommandHandle, user: &str) -> Wallet {
+        let (tx, rx) = oneshot::channel();
+        let resp = blockchain_handle.get_wallet(user.to_string(), tx).await;
 
-        insert_wallet(&mut blockchain, "Alice", 500.0);
+        assert!(resp.is_ok());
+        let resp = rx.await;
+        assert!(resp.is_ok());
+        let resp = resp.unwrap();
+        assert!(resp.is_ok());
+        resp.unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_wasm_simple_contract() {
+        let blockchain = BlockchainService::start();
+        let handle = blockchain.get_cmd_handle();
+
+        insert_wallet(&handle, "Alice", 500.0).await;
 
         // Load the Wasm contract bytecode, that is very un-unittest like :D
         let wasm_bytes =
@@ -77,7 +90,7 @@ mod tests {
             TransactionType::DeployContract { code: wasm_bytes },
             1.0,
         );
-        produce_block_with_single_tx(&mut blockchain, tx1);
+        produce_block_with_single_tx(&handle, tx1).await;
 
         // Call the contract
         let tx2 = Transaction::new(
@@ -87,14 +100,15 @@ mod tests {
             },
             1.0,
         );
-        produce_block_with_single_tx(&mut blockchain, tx2);
+        produce_block_with_single_tx(&handle, tx2).await;
     }
 
-    #[test]
-    fn test_contract_execution() {
-        let mut blockchain = Blockchain::new();
+    #[tokio::test]
+    async fn test_contract_execution() {
+        let blockchain = BlockchainService::start();
+        let handle = blockchain.get_cmd_handle();
 
-        insert_wallet(&mut blockchain, "Alice", 500.0);
+        insert_wallet(&handle, "Alice", 500.0).await;
 
         let wasm_bytes =
             std::fs::read("target/wasm32-unknown-unknown/release/counter_contract.wasm").unwrap();
@@ -104,10 +118,10 @@ mod tests {
             TransactionType::DeployContract { code: wasm_bytes },
             1.0,
         );
-        produce_block_with_single_tx(&mut blockchain, tx1);
+        produce_block_with_single_tx(&handle, tx1).await;
 
         // Call the contract multiple times to increment the counter
-        for i in 1..=5 {
+        for _ in 1..=5 {
             let tx = Transaction::new(
                 "Alice".to_string(),
                 TransactionType::CallContract {
@@ -115,18 +129,21 @@ mod tests {
                 },
                 1.0,
             );
-            produce_block_with_single_tx(&mut blockchain, tx);
+            produce_block_with_single_tx(&handle, tx).await;
+            /*
+            let alice_wallet = get_wallet(&handle, "Alice").await;
+            let bob_wallet = get_wallet(&handle, "Bob").await;
             println!(
                 "After block {}:\nAlice={:#?}\nBob={:#?}",
-                i,
-                blockchain.get_wallet("Alice"),
-                blockchain.get_wallet("Bob")
+                i, alice_wallet, bob_wallet
             );
+            */
         }
 
         // Verify the results
-        let alice_wallet = blockchain.get_wallet("Alice").unwrap();
-        let bob_wallet = blockchain.get_wallet("Bob").unwrap();
+
+        let alice_wallet = get_wallet(&handle, "Alice").await;
+        let bob_wallet = get_wallet(&handle, "Bob").await;
 
         // After 5 calls:
         // - Counter should be 5

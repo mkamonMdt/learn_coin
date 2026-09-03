@@ -22,11 +22,12 @@ pub struct BlockchainService {
 }
 
 impl BlockchainService {
-    fn start(blockchain: Blockchain) -> ServiceHandles {
+    pub fn start() -> ServiceHandles {
         // check if blockchain is at genesis
         let (cmd_tx, cmd_rx) = mpsc::channel(16);
         let (network_tx, network_rx) = mpsc::channel(128);
         let (event_tx, _) = broadcast::channel(128);
+        let blockchain = Blockchain::new();
 
         let mut x = Self {
             state: blockchain,
@@ -49,12 +50,27 @@ impl BlockchainService {
     async fn start_listener(&mut self) {
         loop {
             tokio::select! {
-                Some(_cmd) = self.cmd_rx.recv() => {
-                    todo!()
+                Some(cmd) = self.cmd_rx.recv() => {
+                    self.handle_cmd(cmd).await;
                 }
                 Some(_msg) = self.network_rx.recv() => {
                     todo!()
                 }
+            }
+        }
+    }
+
+    async fn handle_cmd(&mut self, cmd: BlockchainCommand) {
+        match cmd {
+            BlockchainCommand::ProduceBlock {
+                validator: _,
+                transactions,
+            } => {
+                let _ = self.state.add_block(transactions);
+            }
+            BlockchainCommand::GetWallet { user, response } => {
+                let resp = self.state.get_wallet(&user);
+                let _ = response.send(resp);
             }
         }
     }
@@ -68,18 +84,18 @@ pub struct ServiceHandles {
 }
 
 impl ServiceHandles {
-    fn get_cmd_handle(&self) -> CommandHandle {
+    pub fn get_cmd_handle(&self) -> CommandHandle {
         CommandHandle {
             tx: self.cmd_tx.clone(),
         }
     }
-    fn get_network_handle(&self) -> NetworkMessageHandle {
+    pub fn get_network_handle(&self) -> NetworkMessageHandle {
         NetworkMessageHandle {
             tx: self.network_tx.clone(),
         }
     }
 
-    fn event_subscribe(&self) -> EventSubscribtion {
+    pub fn event_subscribe(&self) -> EventSubscribtion {
         EventSubscribtion {
             rx: self.event_tx.subscribe(),
         }

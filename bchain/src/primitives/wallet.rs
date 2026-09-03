@@ -1,13 +1,13 @@
 use serde::Serialize;
 use std::collections::VecDeque;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct PendingUnstake {
     pub amount: f64,
     pub effective_epoch: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct Wallet {
     pub balance: f64,
     pub staked: f64,
