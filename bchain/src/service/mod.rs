@@ -23,7 +23,6 @@ pub struct BlockchainService {
 
 impl BlockchainService {
     pub fn start() -> ServiceHandles {
-        // check if blockchain is at genesis
         let (cmd_tx, cmd_rx) = mpsc::channel(16);
         let (network_tx, network_rx) = mpsc::channel(128);
         let (event_tx, _) = broadcast::channel(128);

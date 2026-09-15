@@ -5,6 +5,7 @@ pub mod service;
 
 mod blockchain;
 mod chain;
+mod chain_clock;
 mod config;
 mod patricia_merkle_trie;
 mod validators;
