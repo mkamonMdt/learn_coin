@@ -72,7 +72,7 @@ impl Blockchain {
 
     fn on_first_block_of_epoch(&mut self) {
         let block_height = self.chain.len();
-        let is_epochs_first_block = (block_height % static_config::EPOCH_HEIGHT) == 0;
+        let is_epochs_first_block = (block_height % static_config::EPOCH_HEIGHT as usize) == 0;
         if !is_epochs_first_block {
             return;
         }
@@ -104,7 +104,7 @@ impl Blockchain {
 
     pub(crate) fn add_block(&mut self, transactions: Vec<Transaction>) -> Result<(), String> {
         let block_height = self.chain.len();
-        let slot_in_epoch = block_height % static_config::EPOCH_HEIGHT;
+        let slot_in_epoch = block_height % static_config::EPOCH_HEIGHT as usize;
         let validator = self
             .validators
             .get_current_epoch_validators()

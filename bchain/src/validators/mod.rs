@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use sha2::{Digest, Sha256};
 
-use crate::config::static_config;
+use crate::{config::static_config, primitives::Slot};
 
 #[derive(Debug)]
 pub struct TwoEpochValidators {
@@ -11,13 +11,16 @@ pub struct TwoEpochValidators {
 }
 
 impl TwoEpochValidators {
-    pub fn new(validators_per_epoch: usize) -> Self {
+    pub fn new(validators_per_epoch: Slot) -> Self {
         Self {
             current_epoch_validators: vec![
                 static_config::GENESIS.to_string();
-                validators_per_epoch
+                validators_per_epoch as usize
             ],
-            next_epoch_validators: vec![static_config::GENESIS.to_string(); validators_per_epoch],
+            next_epoch_validators: vec![
+                static_config::GENESIS.to_string();
+                validators_per_epoch as usize
+            ],
         }
     }
 
