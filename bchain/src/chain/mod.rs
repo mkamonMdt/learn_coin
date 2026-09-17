@@ -1,5 +1,7 @@
+use std::usize;
+
 use crate::config::static_config;
-use crate::primitives::{Block, Transaction, TransactionType};
+use crate::primitives::{Block, Slot, Transaction, TransactionType};
 
 #[derive(Debug)]
 pub struct Chain {
@@ -31,8 +33,8 @@ impl Chain {
         self.chain.len()
     }
 
-    pub fn get_block_by_idx(&self, idx: usize) -> Option<&Block> {
-        self.chain.get(idx)
+    pub fn get_block_by_idx(&self, idx: Slot) -> Option<&Block> {
+        self.chain.get(idx as usize)
     }
 
     pub fn get_last_block(&self) -> Option<&Block> {

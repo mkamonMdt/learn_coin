@@ -9,6 +9,10 @@ use crate::primitives::SlotId;
 use std::time::Duration;
 use std::time::SystemTime;
 
+mod fake;
+
+pub use fake::ChainClockFake;
+
 pub trait ChainClock {
     fn now(&self) -> SlotId;
 

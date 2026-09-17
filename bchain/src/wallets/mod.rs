@@ -1,7 +1,5 @@
-use crate::{
-    config::config_utils,
-    primitives::{PendingUnstake, Wallet},
-};
+use crate::config::config_utils;
+use crate::primitives::{Epoch, PendingUnstake, Slot, Wallet};
 use std::collections::HashMap;
 
 #[derive(Default, Debug)]
@@ -27,7 +25,7 @@ impl Wallets {
         amount: f64,
         fee: f64,
     ) -> Result<(), String> {
-        let unstake_epoch = config_utils::get_epoch(block_height) + 2;
+        let unstake_epoch = config_utils::get_epoch(block_height as Slot) + 2;
         let wallet = self.wallets.get_mut(user).ok_or("User not found")?;
         if wallet.staked < amount {
             return Err("Insufficient stake to unstake".to_string());
@@ -66,7 +64,7 @@ impl Wallets {
 }
 
 impl Wallets {
-    pub fn return_stakes(&mut self, epoch: usize) {
+    pub fn return_stakes(&mut self, epoch: Epoch) {
         for wallet in self.wallets.values_mut() {
             while let Some(pending) = wallet.pending_unstakes.front() {
                 if pending.effective_epoch <= epoch {

@@ -1,10 +1,12 @@
 use serde::Serialize;
 use std::collections::VecDeque;
 
+use crate::primitives::Epoch;
+
 #[derive(Debug, Serialize, Clone)]
 pub struct PendingUnstake {
     pub amount: f64,
-    pub effective_epoch: usize,
+    pub effective_epoch: Epoch,
 }
 
 #[derive(Debug, Serialize, Clone)]

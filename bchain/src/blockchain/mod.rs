@@ -43,12 +43,12 @@ impl Blockchain {
             .ok_or_else(|| BChainError::UserNotFound(user.to_string()))
     }
 
-    fn get_epoch_seed(&self, epoch: usize) -> String {
+    fn get_epoch_seed(&self, epoch: Epoch) -> String {
         match config_utils::get_validators_consensus_block(epoch) {
             x if x < 2 => x.to_string(),
             validators_consensus_block => {
                 assert!(
-                    validators_consensus_block < self.chain.len(),
+                    validators_consensus_block < self.chain.len() as Slot,
                     "Chain of len={} too short for epoch={}",
                     validators_consensus_block,
                     epoch
@@ -77,7 +77,7 @@ impl Blockchain {
             return;
         }
 
-        let epoch = config_utils::get_epoch(block_height);
+        let epoch = config_utils::get_epoch(block_height as Slot);
         let next_epoch = epoch + 1;
         let seed = self.get_epoch_seed(next_epoch);
         self.distribute_rewards();
@@ -170,7 +170,7 @@ impl Blockchain {
     }
 
     fn is_valid(&self) -> bool {
-        for i in 1..self.chain.len() {
+        for i in 1..self.chain.len() as u64 {
             let current = &self.chain.get_block_by_idx(i).unwrap();
             let previous = &self.chain.get_block_by_idx(i - 1).unwrap();
 

@@ -1,5 +1,5 @@
 use crate::config::config_utils;
-use crate::primitives::PendingUnstake;
+use crate::primitives::{PendingUnstake, Slot};
 use crate::Blockchain;
 use wasmi::Caller;
 
@@ -16,8 +16,7 @@ pub fn unstake(
     }
     let blockchain: &mut Blockchain = unsafe { &mut *(blockchain_ptr as *mut Blockchain) };
     let block_height = blockchain.chain.len();
-    let effective_epoch = config_utils::get_epoch(block_height) + 2;
-    //let contract_address = caller.data().clone();
+    let effective_epoch = config_utils::get_epoch(block_height as Slot) + 2;
     let user = caller.data().1.clone();
     let wallet = match blockchain.wallets.wallets.get_mut(&user) {
         Some(wallet) => wallet,
